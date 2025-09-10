@@ -1,10 +1,134 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml_writer/yaml_writer.dart';
+
+/// A data class to hold parameters for the isolate.
+class _IsolateParams {
+  final String zipPath;
+  final String outputDir;
+  final int targetFloor;
+  final SendPort sendPort;
+
+  _IsolateParams({
+    required this.zipPath,
+    required this.outputDir,
+    required this.targetFloor,
+    required this.sendPort,
+  });
+}
+
+/// This is the entry point for the isolate.
+/// It performs the heavy lifting of unzipping, modifying, and re-zipping.
+Future<void> _zipProcessor(_IsolateParams params) async {
+  final sendPort = params.sendPort;
+
+  void log(String message) {
+    sendPort.send({'type': 'log', 'payload': message});
+  }
+
+  try {
+    log('正在處理樓層 ${params.targetFloor} ...');
+
+    final baseName = p.basename(params.zipPath);
+    final match = RegExp(r'(\d+)F\.zip$').firstMatch(baseName);
+    if (match == null) throw Exception('來源檔名格式錯誤');
+    final sourceFloor = int.parse(match.group(1)!);
+    final outZip = p.join(params.outputDir,
+        baseName.replaceAll('${sourceFloor}F.zip', '${params.targetFloor}F.zip'));
+
+    final tempDir = await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
+
+    try {
+      // Unzip
+      final bytes = await File(params.zipPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+      for (var file in archive) {
+        final filename = p.join(tempDir.path, file.name);
+        if (file.isFile) {
+          final outFile = File(filename);
+          await outFile.create(recursive: true);
+          await outFile.writeAsBytes(file.content as List<int>);
+        } else {
+          await Directory(filename).create(recursive: true);
+        }
+      }
+
+      // Modify graph.yaml
+      final graphFile = File(p.join(tempDir.path, 'graph.yaml'));
+      if (await graphFile.exists()) {
+        var text = await graphFile.readAsString();
+        text = text.replaceAllMapped(
+            RegExp(r'(\w+_' + sourceFloor.toString() + r'F)'),
+            (m) => m.group(1)!.replaceAll('${sourceFloor}F', '${params.targetFloor}F'));
+        await graphFile.writeAsString(text);
+      }
+
+      // Modify map.json
+      final mapFile = File(p.join(tempDir.path, 'map.json'));
+      if (await mapFile.exists()) {
+        var text = await mapFile.readAsString();
+        final mapData = Map<String, dynamic>.from(jsonDecode(text));
+        if (mapData.containsKey('name')) {
+          mapData['name'] = (mapData['name'] as String)
+              .replaceAll('${sourceFloor}F', '${params.targetFloor}F');
+        }
+        await mapFile.writeAsString(jsonEncode(mapData));
+      }
+
+      // Modify location.yaml
+      final locFile = File(p.join(tempDir.path, 'location.yaml'));
+      if (await locFile.exists()) {
+        final content = await locFile.readAsString();
+        final data = loadYaml(content);
+        Map newData = {};
+        if (data is Map) {
+          for (var k in data.keys) {
+            if (k == 'loc') {
+              newData[k] = data[k];
+            } else if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(k) && !k.startsWith('MA')) {
+              final prefix = RegExp(r'^([A-Z]+)').firstMatch(k)!.group(1)!;
+              final numStr = k.substring(prefix.length);
+              final newKey =
+                  '$prefix${params.targetFloor.toString().padLeft(2, '0')}${numStr.substring(2)}';
+              newData[newKey] = data[k];
+            } else {
+              newData[k] = data[k];
+            }
+          }
+        }
+        await locFile.writeAsString(YamlWriter().write(newData));
+      }
+
+      // Re-zip
+      final encoder = ZipFileEncoder();
+      encoder.create(outZip);
+      await for (final entity in tempDir.list(recursive: true)) {
+        final relative = p.relative(entity.path, from: tempDir.path);
+        if (entity is File) {
+          await encoder.addFile(entity, relative);
+        }
+      }
+      encoder.close();
+      log('完成: ${params.targetFloor} -> $outZip');
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
+    // Signal completion
+    sendPort.send({'type': 'done'});
+  } catch (e, s) {
+    // Signal error
+    sendPort.send({
+      'type': 'error',
+      'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
+    });
+  }
+}
+
 
 class FloorZipGenerator {
   Future<void> generateZips({
@@ -21,14 +145,47 @@ class FloorZipGenerator {
 
     onLog('將生成樓層: ${floors.join(',')}');
 
-    final tasks = <Future>[];
+    final completers = <Future>[];
     for (var floor in floors) {
-      tasks.add(_buildNewFloorZip(zipPath, floor, outputDir, onLog).catchError((e) {
-        onLog('錯誤: 在處理樓層 $floor 時發生錯誤: $e');
-      }));
+      final completer = Completer<void>();
+      completers.add(completer.future);
+
+      final receivePort = ReceivePort();
+      receivePort.listen((message) {
+        if (message is Map) {
+          switch (message['type']) {
+            case 'log':
+              onLog(message['payload']);
+              break;
+            case 'error':
+              onLog(message['payload']);
+              completer.complete();
+              receivePort.close();
+              break;
+            case 'done':
+              completer.complete();
+              receivePort.close();
+              break;
+          }
+        }
+      });
+
+      try {
+        await Isolate.spawn(
+            _zipProcessor,
+            _IsolateParams(
+              zipPath: zipPath,
+              outputDir: outputDir,
+              targetFloor: floor,
+              sendPort: receivePort.sendPort,
+            ));
+      } catch (e) {
+        onLog("無法建立 Isolate 來處理樓層 $floor: $e");
+        completer.complete();
+      }
     }
 
-    await Future.wait(tasks);
+    await Future.wait(completers);
     onLog('所有任務已完成。');
   }
 
@@ -53,108 +210,5 @@ class FloorZipGenerator {
     }
     final sorted = floors.toList()..sort();
     return sorted;
-  }
-
-  Future<void> _buildNewFloorZip(
-      String templateZip, int targetFloor, String outDir, ValueChanged<String> onLog) async {
-    onLog('正在生成樓層 $targetFloor ...');
-
-    // To make this truly parallel and not block the main isolate,
-    // this entire operation should be moved to a separate isolate.
-    // However, for a start, Future.wait improves concurrent I/O.
-    // The synchronous I/O calls within are still a bottleneck.
-    // Let's refactor them to be async.
-
-    final baseName = p.basename(templateZip);
-
-    final match = RegExp(r'(\d+)F\.zip$').firstMatch(baseName);
-    if (match == null) throw Exception('來源檔名格式錯誤');
-    final sourceFloor = int.parse(match.group(1)!);
-    final outZip = p.join(
-        outDir, baseName.replaceAll('${sourceFloor}F.zip', '${targetFloor}F.zip'));
-
-    final tempDir = await Directory.systemTemp.createTemp('floor_zip_');
-
-    try {
-      // 解壓 ZIP
-      final bytes = await File(templateZip).readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes);
-      for (var file in archive) {
-        final filename = p.join(tempDir.path, file.name);
-        if (file.isFile) {
-          final outFile = File(filename);
-          await outFile.create(recursive: true);
-          await outFile.writeAsBytes(file.content as List<int>);
-        } else {
-          await Directory(filename).create(recursive: true);
-        }
-      }
-
-      // 修改 graph.yaml
-      for (var fname in ['graph.yaml']) {
-        final fpath = p.join(tempDir.path, fname);
-        final file = File(fpath);
-        if (await file.exists()) {
-          var text = await file.readAsString();
-          text = text.replaceAllMapped(
-              RegExp(r'(\w+_' + sourceFloor.toString() + r'F)'),
-              (m) => m.group(1)!.replaceAll('${sourceFloor}F', '${targetFloor}F'));
-          await file.writeAsString(text);
-        }
-      }
-
-      // 修改 map.json
-      final mapFile = File(p.join(tempDir.path, 'map.json'));
-      if (await mapFile.exists()) {
-        var text = await mapFile.readAsString();
-        final mapData = Map<String, dynamic>.from(jsonDecode(text));
-        if (mapData.containsKey('name')) {
-          mapData['name'] = (mapData['name'] as String)
-              .replaceAll('${sourceFloor}F', '${targetFloor}F');
-        }
-        await mapFile.writeAsString(jsonEncode(mapData));
-      }
-
-      // 修改 location.yaml
-      final locFile = File(p.join(tempDir.path, 'location.yaml'));
-      if (await locFile.exists()) {
-        final content = await locFile.readAsString();
-        final data = loadYaml(content);
-
-        Map newData = {};
-        if (data is Map) {
-          for (var k in data.keys) {
-            if (k == 'loc') {
-              newData[k] = data[k];
-            } else if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(k) && !k.startsWith('MA')) {
-              final prefix = RegExp(r'^([A-Z]+)').firstMatch(k)!.group(1)!;
-              final num = k.substring(prefix.length);
-              final newKey =
-                  '$prefix${targetFloor.toString().padLeft(2, '0')}${num.substring(2)}';
-              newData[newKey] = data[k];
-            } else {
-              newData[k] = data[k];
-            }
-          }
-        }
-
-        final yamlString = YamlWriter().write(newData);
-        await locFile.writeAsString(yamlString);
-      }
-
-      // 打包 ZIP
-      final encoder = ZipFileEncoder();
-      encoder.create(outZip);
-      await for (final entity in tempDir.list(recursive: true)) {
-         final relative = p.relative(entity.path, from: tempDir.path);
-         if (entity is File) {
-           await encoder.addFile(entity, relative);
-         }
-      }
-      encoder.close();
-      onLog('完成: $targetFloor -> $outZip');
-    } finally {
-      await tempDir.delete(recursive: true);
-    }
   }
 }

@@ -51,20 +51,29 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  void appendLog(String message) {
+  void _clearLog() {
     setState(() {
-      log += message + '\n';
+      log = '';
     });
-    // Scroll to the bottom after a short delay
-    Future.delayed(const Duration(milliseconds: 50), () {
-      if (_logScrollController.hasClients) {
-        _logScrollController.animateTo(
-          _logScrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  }
+
+  void appendLog(String message) {
+    // Ensure setState is called on the main thread
+    if (mounted) {
+      setState(() {
+        log += message + '\n';
+      });
+      // Scroll to the bottom after a short delay
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (_logScrollController.hasClients) {
+          _logScrollController.animateTo(
+            _logScrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
   }
 
   Future<void> pickZip() async {
@@ -109,19 +118,18 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    // No need to await here, let it run in the background
-    _zipGenerator.generateZips(
+    await _zipGenerator.generateZips(
       zipPath: zipPath!,
       outputDir: outputDir!,
       floorInput: floorInput,
       onLog: appendLog,
-    ).whenComplete(() {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    });
+    );
+
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -133,6 +141,7 @@ class _HomePageState extends State<HomePage> {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ElevatedButton(
                   onPressed: _isLoading ? null : pickZip,
@@ -157,10 +166,30 @@ class _HomePageState extends State<HomePage> {
                   child: const Text('執行生成'),
                 ),
                 const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('執行日誌', style: Theme.of(context).textTheme.titleMedium),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: _isLoading ? null : _clearLog,
+                      tooltip: '清除日誌',
+                    ),
+                  ],
+                ),
                 Expanded(
-                  child: SingleChildScrollView(
-                    controller: _logScrollController,
-                    child: Text(log, style: const TextStyle(fontFamily: 'monospace')),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: SingleChildScrollView(
+                      controller: _logScrollController,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(log, style: const TextStyle(fontFamily: 'monospace')),
+                      ),
+                    ),
                   ),
                 ),
               ],

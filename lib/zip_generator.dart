@@ -1,13 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:async'; // ✅ 補上這個
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml_writer/yaml_writer.dart';
 
-/// A data class to hold parameters for the isolate.
 class _IsolateParams {
   final String zipPath;
   final String outputDir;
@@ -22,8 +22,6 @@ class _IsolateParams {
   });
 }
 
-/// This is the entry point for the isolate.
-/// It performs the heavy lifting of unzipping, modifying, and re-zipping.
 Future<void> _zipProcessor(_IsolateParams params) async {
   final sendPort = params.sendPort;
 
@@ -118,17 +116,14 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     } finally {
       await tempDir.delete(recursive: true);
     }
-    // Signal completion
     sendPort.send({'type': 'done'});
   } catch (e, s) {
-    // Signal error
     sendPort.send({
       'type': 'error',
       'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
     });
   }
 }
-
 
 class FloorZipGenerator {
   Future<void> generateZips({

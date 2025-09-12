@@ -58,12 +58,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   void appendLog(String message) {
-    // Ensure setState is called on the main thread
     if (mounted) {
       setState(() {
         log += message + '\n';
       });
-      // Scroll to the bottom after a short delay
       Future.delayed(const Duration(milliseconds: 50), () {
         if (_logScrollController.hasClients) {
           _logScrollController.animateTo(
@@ -197,7 +195,7 @@ class _HomePageState extends State<HomePage> {
           ),
           if (_isLoading)
             Container(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha: 0.5), // ✅ 新版 API
               child: const Center(
                 child: CircularProgressIndicator(),
               ),

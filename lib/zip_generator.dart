@@ -6,7 +6,6 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
 import 'package:path/path.dart' as p;
-import 'package:yaml_writer/yaml_writer.dart';
 
 class _IsolateParams {
   final String zipPath;
@@ -87,7 +86,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         if (data is Map) {
           for (var k in data.keys) {
             if (k == 'loc') {
-              newData[k] = data[k];
+              newData[k] = data[k]; // 保留原本 loc
             } else if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(k) && !k.startsWith('MA')) {
               final prefix = RegExp(r'^([A-Z]+)').firstMatch(k)!.group(1)!;
               final numStr = k.substring(prefix.length);
@@ -99,7 +98,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             }
           }
         }
-        await locFile.writeAsString(YamlWriter().write(newData));
+        // 改為單行陣列輸出
+        await locFile.writeAsString(_writeYamlSingleLine(newData));
       }
 
       // Re-zip
@@ -123,6 +123,22 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
     });
   }
+}
+
+// 輔助函式：把陣列寫成單行
+String _writeYamlSingleLine(Map map) {
+  final buffer = StringBuffer();
+  for (var entry in map.entries) {
+    final key = entry.key;
+    final value = entry.value;
+    if (value is List) {
+      final valStr = value.map((e) => e.toString()).join(', ');
+      buffer.writeln('$key: [$valStr]');
+    } else {
+      buffer.writeln('$key: $value');
+    }
+  }
+  return buffer.toString();
 }
 
 class FloorZipGenerator {

@@ -197,7 +197,7 @@ class _HomePageState extends State<HomePage> {
           ),
           if (_isLoading)
             Container(
-              color: Colors.black.withAlpha(128),
+              color: Colors.black.withOpacity(0.5),
               child: const Center(
                 child: CircularProgressIndicator(),
               ),

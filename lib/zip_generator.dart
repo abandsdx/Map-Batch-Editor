@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:isolate';
@@ -92,23 +91,22 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             final key = entry.key.toString();
 
             if (key == 'loc' && entry.value is Map) {
-              // Unnest the 'loc' map and transform its keys
+              // Unnest the 'loc' map and apply the static key transformation.
               final locMap = entry.value as Map;
               for (var locEntry in locMap.entries) {
                 final locKey = locEntry.key.toString();
 
-                if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(locKey) && !locKey.startsWith('MA')) {
-                  final prefix = RegExp(r'^([A-Z]+)').firstMatch(locKey)!.group(1)!;
-                  final numStr = locKey.substring(prefix.length);
-                  final newKey =
-                      '$prefix${params.targetFloor.toString().padLeft(2, '0')}${numStr.substring(2)}';
+                if (RegExp(r'^[A-Z]+01[0-9]{2}$').hasMatch(locKey) && !locKey.startsWith('MA')) {
+                  // Static transformation: '01' floor becomes '10' floor.
+                  final newKey = locKey.replaceFirst('01', '10');
                   newData[newKey] = locEntry.value;
                 } else {
+                  // For keys inside 'loc' that don't match, keep them as is.
                   newData[locKey] = locEntry.value;
                 }
               }
             } else {
-              // Preserve other top-level keys
+              // Preserve other top-level keys (e.g., 'Dead') without transformation.
               newData[key] = entry.value;
             }
           }

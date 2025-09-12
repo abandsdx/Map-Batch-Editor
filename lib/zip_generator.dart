@@ -85,19 +85,30 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       if (await locFile.exists()) {
         final content = await locFile.readAsString();
         final data = loadYaml(content);
-        Map newData = {};
+        Map<String, dynamic> newData = {};
         if (data is Map) {
-          for (var k in data.keys) {
-            if (k == 'loc') {
-              newData[k] = data[k];
-            } else if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(k) && !k.startsWith('MA')) {
-              final prefix = RegExp(r'^([A-Z]+)').firstMatch(k)!.group(1)!;
-              final numStr = k.substring(prefix.length);
-              final newKey =
-                  '$prefix${params.targetFloor.toString().padLeft(2, '0')}${numStr.substring(2)}';
-              newData[newKey] = data[k];
+          for (var entry in data.entries) {
+            final key = entry.key.toString();
+
+            if (key == 'loc' && entry.value is Map) {
+              // Unnest the 'loc' map and transform its keys
+              final locMap = entry.value as Map;
+              for (var locEntry in locMap.entries) {
+                final locKey = locEntry.key.toString();
+
+                if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(locKey) && !locKey.startsWith('MA')) {
+                  final prefix = RegExp(r'^([A-Z]+)').firstMatch(locKey)!.group(1)!;
+                  final numStr = locKey.substring(prefix.length);
+                  final newKey =
+                      '$prefix${params.targetFloor.toString().padLeft(2, '0')}${numStr.substring(2)}';
+                  newData[newKey] = locEntry.value;
+                } else {
+                  newData[locKey] = locEntry.value;
+                }
+              }
             } else {
-              newData[k] = data[k];
+              // Preserve other top-level keys
+              newData[key] = entry.value;
             }
           }
         }

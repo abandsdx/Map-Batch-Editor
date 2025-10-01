@@ -266,7 +266,7 @@ class _HomePageState extends State<HomePage> {
                       controller: _logScrollController,
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
-                        child: Text(log, style: const TextStyle(fontFamily: 'monospace')),
+                        child: SelectableText(log, style: const TextStyle(fontFamily: 'monospace')),
                       ),
                     ),
                   ),

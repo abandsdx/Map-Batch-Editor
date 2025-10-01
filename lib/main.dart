@@ -124,12 +124,18 @@ class _HomePageState extends State<HomePage> {
       return null;
     }
 
-    final jsonNameMatch = RegExp(r'(\d+)F$').firstMatch(nameFromJson);
+    final jsonNameMatch = RegExp(r'^(?:F(\d+)|(\d+)F)$', caseSensitive: false).firstMatch(nameFromJson.trim());
     if (jsonNameMatch == null) {
-      appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。');
+      appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。格式應為 "16F" 或 "F16"。');
       return null;
     }
-    final floorFromJson = int.parse(jsonNameMatch.group(1)!);
+
+    final floorStr = jsonNameMatch.group(1) ?? jsonNameMatch.group(2);
+    if (floorStr == null) {
+        appendLog('錯誤：從 "$nameFromJson" 解析樓層時發生未知錯誤。');
+        return null;
+    }
+    final floorFromJson = int.parse(floorStr);
 
     if (floorFromFileName == floorFromJson) {
       return {'correctFloor': floorFromFileName, 'floorInFile': floorFromJson};

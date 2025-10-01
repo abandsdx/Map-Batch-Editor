@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -97,6 +99,75 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<Map<String, int>?> _getConfirmedSourceInfo(String zipPath) async {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final mapFile = archive.findFile('map.json');
+
+    final fileName = p.basename(zipPath);
+    final fileNameMatch = RegExp(r'(\d+)F\.zip$').firstMatch(fileName);
+    if (fileNameMatch == null) {
+      appendLog('錯誤：無法從檔名 $fileName 解析樓層。');
+      return null;
+    }
+    final floorFromFileName = int.parse(fileNameMatch.group(1)!);
+
+    if (mapFile == null) {
+      appendLog('錯誤：在 ZIP 中找不到 map.json。');
+      return null;
+    }
+
+    final mapData = jsonDecode(utf8.decode(mapFile.content as List<int>));
+    final nameFromJson = mapData['name'] as String?;
+    if (nameFromJson == null) {
+      appendLog('錯誤：map.json 中沒有 "name" 欄位。');
+      return null;
+    }
+
+    final jsonNameMatch = RegExp(r'(\d+)F$').firstMatch(nameFromJson);
+    if (jsonNameMatch == null) {
+      appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。');
+      return null;
+    }
+    final floorFromJson = int.parse(jsonNameMatch.group(1)!);
+
+    if (floorFromFileName == floorFromJson) {
+      return {'correctFloor': floorFromFileName, 'floorInFile': floorFromJson};
+    }
+
+    // Conflict detected, ask user
+    return await showDialog<Map<String, int>?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('名稱衝突'),
+          content: Text('檔名樓層 (${floorFromFileName}F) 與 map.json 內部樓層 (${floorFromJson}F) 不一致。\n\n請問哪個才是正確的來源樓層？'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('以檔名為準 (${floorFromFileName}F)'),
+              onPressed: () {
+                Navigator.of(context).pop({'correctFloor': floorFromFileName, 'floorInFile': floorFromJson});
+              },
+            ),
+            TextButton(
+              child: Text('以 JSON 為準 (${floorFromJson}F)'),
+              onPressed: () {
+                Navigator.of(context).pop({'correctFloor': floorFromJson, 'floorInFile': floorFromJson});
+              },
+            ),
+            TextButton(
+              child: const Text('取消'),
+              onPressed: () {
+                Navigator.of(context).pop(null);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> generateZips() async {
     if (_isLoading) return;
 
@@ -116,11 +187,21 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    final sourceInfo = await _getConfirmedSourceInfo(zipPath!);
+    if (sourceInfo == null) {
+      appendLog('操作已取消或驗證失敗。');
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    appendLog('驗證成功。來源樓層: ${sourceInfo['correctFloor']}F, 檔案內樓層: ${sourceInfo['floorInFile']}F');
+
     await _zipGenerator.generateZips(
       zipPath: zipPath!,
       outputDir: outputDir!,
       floorInput: floorInput,
       onLog: appendLog,
+      sourceInfo: sourceInfo,
     );
 
     if (mounted) {
@@ -195,7 +276,7 @@ class _HomePageState extends State<HomePage> {
           ),
           if (_isLoading)
             Container(
-              color: Colors.black.withValues(alpha: 0.5), // ✅ 新版 API
+              color: Colors.black.withOpacity(0.5),
               child: const Center(
                 child: CircularProgressIndicator(),
               ),

@@ -100,11 +100,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<Map<String, int>?> _getConfirmedSourceInfo(String zipPath) async {
-    final bytes = await File(zipPath).readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
-    final mapFile = archive.findFile('map.json');
+    try {
+      final bytes = await File(zipPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final mapFile = archive.findFile('map.json');
 
-    final fileName = p.basename(zipPath);
+      final fileName = p.basename(zipPath);
     final fileNameMatch = RegExp(r'(\d+)F\.zip$').firstMatch(fileName);
     if (fileNameMatch == null) {
       appendLog('錯誤：無法從檔名 $fileName 解析樓層。');
@@ -124,11 +125,11 @@ class _HomePageState extends State<HomePage> {
       return null;
     }
 
-    final jsonNameMatch = RegExp(r'^(?:F(\d+)|(\d+)F)$', caseSensitive: false).firstMatch(nameFromJson.trim());
-    if (jsonNameMatch == null) {
-      appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。格式應為 "16F" 或 "F16"。');
-      return null;
-    }
+      final jsonNameMatch = RegExp(r'^(?:F(\d+)|(\d+)F)$', caseSensitive: false).firstMatch(nameFromJson.trim());
+      if (jsonNameMatch == null) {
+        appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。格式應為 "16F" 或 "F16"。');
+        return null;
+      }
 
     final floorStr = jsonNameMatch.group(1) ?? jsonNameMatch.group(2);
     if (floorStr == null) {
@@ -141,37 +142,44 @@ class _HomePageState extends State<HomePage> {
       return {'correctFloor': floorFromFileName, 'floorInFile': floorFromJson};
     }
 
-    // Conflict detected, ask user
-    return await showDialog<Map<String, int>?>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('名稱衝突'),
-          content: Text('檔名樓層 (${floorFromFileName}F) 與 map.json 內部樓層 (${floorFromJson}F) 不一致。\n\n請問哪個才是正確的來源樓層？'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('以檔名為準 (${floorFromFileName}F)'),
-              onPressed: () {
-                Navigator.of(context).pop({'correctFloor': floorFromFileName, 'floorInFile': floorFromJson});
-              },
-            ),
-            TextButton(
-              child: Text('以 JSON 為準 (${floorFromJson}F)'),
-              onPressed: () {
-                Navigator.of(context).pop({'correctFloor': floorFromJson, 'floorInFile': floorFromJson});
-              },
-            ),
-            TextButton(
-              child: const Text('取消'),
-              onPressed: () {
-                Navigator.of(context).pop(null);
-              },
-            ),
-          ],
-        );
-      },
-    );
+      // Conflict detected, ask user
+      return await showDialog<Map<String, int>?>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('名稱衝突'),
+            content: Text('檔名樓層 (${floorFromFileName}F) 與 map.json 內部樓層 (${floorFromJson}F) 不一致。\n\n請問哪個才是正確的來源樓層？'),
+            actions: <Widget>[
+              TextButton(
+                child: Text('以檔名為準 (${floorFromFileName}F)'),
+                onPressed: () {
+                  Navigator.of(context).pop({'correctFloor': floorFromFileName, 'floorInFile': floorFromJson});
+                },
+              ),
+              TextButton(
+                child: Text('以 JSON 為準 (${floorFromJson}F)'),
+                onPressed: () {
+                  Navigator.of(context).pop({'correctFloor': floorFromJson, 'floorInFile': floorFromJson});
+                },
+              ),
+              TextButton(
+                child: const Text('取消'),
+                onPressed: () {
+                  Navigator.of(context).pop(null);
+                },
+              ),
+            ],
+          );
+        },
+      );
+    } on FileSystemException catch (e) {
+      appendLog('錯誤：無法讀取檔案。\n檔案路徑: $zipPath\n原因: ${e.message}\n請確認檔案是否存在且未被移動或刪除。');
+      return null;
+    } catch (e) {
+      appendLog('驗證過程中發生未知錯誤: $e');
+      return null;
+    }
   }
 
   Future<void> generateZips() async {

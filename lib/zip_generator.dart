@@ -12,12 +12,14 @@ class _IsolateParams {
   final String outputDir;
   final int targetFloor;
   final SendPort sendPort;
+  final Map<String, int> sourceInfo;
 
   _IsolateParams({
     required this.zipPath,
     required this.outputDir,
     required this.targetFloor,
     required this.sendPort,
+    required this.sourceInfo,
   });
 }
 
@@ -32,11 +34,11 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     log('正在處理樓層 ${params.targetFloor} ...');
 
     final baseName = p.basename(params.zipPath);
-    final match = RegExp(r'(\d+)F\.zip$').firstMatch(baseName);
-    if (match == null) throw Exception('來源檔名格式錯誤');
-    final sourceFloor = int.parse(match.group(1)!);
+    final correctSourceFloor = params.sourceInfo['correctFloor']!;
+    final floorToReplace = params.sourceInfo['floorInFile']!;
+
     final outZip = p.join(params.outputDir,
-        baseName.replaceAll('${sourceFloor}F.zip', '${params.targetFloor}F.zip'));
+        baseName.replaceAll('${correctSourceFloor}F.zip', '${params.targetFloor}F.zip'));
 
     final tempDir = await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
 
@@ -60,8 +62,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       if (await graphFile.exists()) {
         var text = await graphFile.readAsString();
         text = text.replaceAllMapped(
-            RegExp(r'(\w+_' + sourceFloor.toString() + r'F)'),
-            (m) => m.group(1)!.replaceAll('${sourceFloor}F', '${params.targetFloor}F'));
+            RegExp(r'(\w+_' + floorToReplace.toString() + r'F)'),
+            (m) => m.group(1)!.replaceAll('${floorToReplace}F', '${params.targetFloor}F'));
         await graphFile.writeAsString(text);
       }
 
@@ -72,7 +74,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         final mapData = Map<String, dynamic>.from(jsonDecode(text));
         if (mapData.containsKey('name')) {
           mapData['name'] = (mapData['name'] as String)
-              .replaceAll('${sourceFloor}F', '${params.targetFloor}F');
+              .replaceAll('${floorToReplace}F', '${params.targetFloor}F');
         }
         await mapFile.writeAsString(jsonEncode(mapData));
       }
@@ -147,6 +149,7 @@ class FloorZipGenerator {
     required String outputDir,
     required String floorInput,
     required ValueChanged<String> onLog,
+    required Map<String, int> sourceInfo,
   }) async {
     final floors = _parseFloorInput(floorInput);
     if (floors.isEmpty) {
@@ -189,6 +192,7 @@ class FloorZipGenerator {
               outputDir: outputDir,
               targetFloor: floor,
               sendPort: receivePort.sendPort,
+            sourceInfo: sourceInfo,
             ));
       } catch (e) {
         onLog("無法建立 Isolate 來處理樓層 $floor: $e");

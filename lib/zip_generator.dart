@@ -33,13 +33,14 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   try {
     log('正在處理樓層 ${params.targetFloor} ...');
 
-    final correctFloorName = params.sourceInfo['correctFloorName'] as String;
+    final outputBaseName = params.sourceInfo['outputBaseName'] as String;
     final namesToReplace = (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
-    final newFloorName = '${params.targetFloor}F';
-    final newFloorNum = params.targetFloor.toString().padLeft(2, '0');
 
-    final baseName = p.basename(params.zipPath);
-    final outZip = p.join(params.outputDir, baseName.replaceAll('$correctFloorName.zip', '$newFloorName.zip'));
+    final newFloorIdentifier = '${params.targetFloor}F';
+    final newFullName = '$outputBaseName$newFloorIdentifier';
+    final newFloorNumStr = params.targetFloor.toString();
+
+    final outZip = p.join(params.outputDir, '$newFullName.zip');
 
     final tempDir = await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
 
@@ -59,7 +60,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       String universalReplace(String content) {
         String result = content;
         for (final oldName in namesToReplace) {
-          result = result.replaceAll(oldName, newFloorName);
+          result = result.replaceAll(oldName, newFullName);
         }
         return result;
       }
@@ -78,7 +79,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         var text = await mapFile.readAsString();
         final mapData = Map<String, dynamic>.from(jsonDecode(text));
         if (mapData.containsKey('name')) {
-          mapData['name'] = newFloorName;
+          mapData['name'] = newFullName;
         }
         await mapFile.writeAsString(jsonEncode(mapData));
       }
@@ -100,7 +101,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             String currentKey = k;
             for (final oldNum in oldFloorNumbers) {
               if (oldNum != null) {
-                currentKey = currentKey.replaceAll(oldNum, newFloorNum);
+                currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
               }
             }
             newData[currentKey] = data[k];

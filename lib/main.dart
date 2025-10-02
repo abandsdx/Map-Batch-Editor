@@ -45,12 +45,15 @@ class _HomePageState extends State<HomePage> {
   String? zipPath;
   String? outputDir;
   String floorInput = '';
+  String _outputBaseName = '';
+  final _baseNameController = TextEditingController();
   String log = '';
   bool _isLoading = false;
 
   @override
   void dispose() {
     _logScrollController.dispose();
+    _baseNameController.dispose();
     super.dispose();
   }
 
@@ -84,8 +87,19 @@ class _HomePageState extends State<HomePage> {
       allowedExtensions: ['zip'],
     );
     if (result != null && result.files.single.path != null) {
+      final newPath = result.files.single.path!;
+      final baseName = p.basename(newPath);
+      final match = RegExp(r'^(.*?)(_?)(F?\d+F?)(.*\.zip)$', caseSensitive: false).firstMatch(baseName);
+
       setState(() {
-        zipPath = result.files.single.path;
+        zipPath = newPath;
+        if (match != null) {
+          _outputBaseName = '${match.group(1)}${match.group(2)}';
+          _baseNameController.text = _outputBaseName;
+        } else {
+          _outputBaseName = '';
+          _baseNameController.text = '';
+        }
       });
     }
   }
@@ -100,11 +114,17 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String? _extractFloorName(String rawName) {
+  Map<String, String>? _extractNameParts(String rawName) {
     if (rawName.isEmpty) return null;
-    // This regex looks for patterns like "9F", "F9", "F10", "10F" case-insensitively.
-    final match = RegExp(r'(\d+F|F\d+)', caseSensitive: false).firstMatch(rawName);
-    return match?.group(0)?.toUpperCase();
+    final cleanName = rawName.replaceAll('.zip', '');
+    // Finds a floor identifier like '9F' or 'F10' at the end of the string.
+    final match = RegExp(r'(F?\d+F?)$', caseSensitive: false).firstMatch(cleanName);
+    if (match != null) {
+      final floor = match.group(0)!.toUpperCase();
+      final base = cleanName.substring(0, match.start);
+      return {'base': base, 'floor': floor};
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>?> _getConfirmedSourceInfo(String zipPath) async {
@@ -112,29 +132,31 @@ class _HomePageState extends State<HomePage> {
       final bytes = await File(zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
 
-      final Set<String> foundNames = {};
+      final Set<String> foundBases = {};
+      final Set<String> foundFloors = {};
 
-      // 1. Parse from filename
-      final fileName = p.basename(zipPath);
-      final nameFromFile = _extractFloorName(fileName);
-      if (nameFromFile != null) {
-        foundNames.add(nameFromFile);
+      void addParts(Map<String, String>? parts) {
+        if (parts != null) {
+          // Only add non-empty base names. An empty base is valid (e.g. for "9F").
+          foundBases.add(parts['base']!);
+          if (parts['floor']!.isNotEmpty) foundFloors.add(parts['floor']!);
+        }
       }
 
-      // 2. Parse from map.json
+      // 1. From filename
+      addParts(_extractNameParts(p.basename(zipPath)));
+
+      // 2. From map.json
       final mapFile = archive.findFile('map.json');
       if (mapFile != null) {
         final mapData = jsonDecode(utf8.decode(mapFile.content as List<int>));
         final nameFromJsonRaw = mapData['name'] as String?;
         if (nameFromJsonRaw != null) {
-          final nameFromJson = _extractFloorName(nameFromJsonRaw);
-          if (nameFromJson != null) {
-            foundNames.add(nameFromJson);
-          }
+          addParts(_extractNameParts(nameFromJsonRaw));
         }
       }
 
-      // 3. Parse from graph.yml
+      // 3. From graph.yml
       final graphFile = archive.findFile('graph.yml');
       if (graphFile != null) {
           final graphContent = utf8.decode(graphFile.content as List<int>);
@@ -142,62 +164,22 @@ class _HomePageState extends State<HomePage> {
           if (graphData is Map && graphData.containsKey('name')) {
               final nameFromGraphRaw = graphData['name'] as String?;
               if (nameFromGraphRaw != null) {
-                  final nameFromGraph = _extractFloorName(nameFromGraphRaw);
-                  if (nameFromGraph != null) {
-                      foundNames.add(nameFromGraph);
-                  }
+                  addParts(_extractNameParts(nameFromGraphRaw));
               }
           }
       }
 
-      if (foundNames.isEmpty) {
-        appendLog('錯誤：在檔名、map.json 或 graph.yml 中都找不到有效的樓層名稱。');
+      if (foundFloors.isEmpty) {
+        appendLog('錯誤：在任何來源中都找不到有效的樓層標識 (例如 9F, F10)。');
         return null;
       }
 
-      if (foundNames.length == 1) {
-        final name = foundNames.first;
-        return {'correctFloorName': name, 'namesToReplace': foundNames.toList()};
-      }
-
-      // Conflict detected, ask user
-      final String? chosenName = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text('偵測到多重名稱衝突'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('在不同位置偵測到以下樓層名稱，請選擇一個作為正確的來源：'),
-                const SizedBox(height: 16),
-                ...foundNames.map((name) => RadioListTile<String>(
-                  title: Text(name),
-                  value: name,
-                  groupValue: null, // We handle state outside
-                  onChanged: (value) {
-                     Navigator.of(context).pop(value);
-                  },
-                )).toList(),
-              ],
-            ),
-            actions: <Widget>[
-              TextButton(
-                child: const Text('取消'),
-                onPressed: () => Navigator.of(context).pop(null),
-              ),
-            ],
-          );
-        },
-      );
-
-      if (chosenName == null) {
-        return null; // User cancelled
-      }
-
-      return {'correctFloorName': chosenName, 'namesToReplace': foundNames.toList()};
+      // We will show a dialog in the next step. For now, this step's goal is parsing.
+      // The lists of found names will be used to build the dialog.
+      return {
+        'foundBases': foundBases,
+        'foundFloors': foundFloors,
+      };
 
     } on FileSystemException catch (e) {
       appendLog('錯誤：無法讀取檔案。\n檔案路徑: $zipPath\n原因: ${e.message}\n請確認檔案是否存在且未被移動或刪除。');
@@ -226,17 +208,96 @@ class _HomePageState extends State<HomePage> {
       setState(() => _isLoading = false);
       return;
     }
+    if (_outputBaseName.isEmpty && !RegExp(r'^\d+$').hasMatch(floorInput)) {
+        appendLog('警告：未指定輸出基本名稱，將只使用樓層號碼作為檔名。');
+    }
 
-    final sourceInfo = await _getConfirmedSourceInfo(zipPath!);
-    if (sourceInfo == null) {
+
+    final validationResult = await _getConfirmedSourceInfo(zipPath!);
+    if (validationResult == null) {
       appendLog('操作已取消或驗證失敗。');
       setState(() => _isLoading = false);
       return;
     }
 
-    appendLog('驗證成功。選擇的來源樓層: ${sourceInfo['correctFloorName']}');
-    appendLog('將替換以下舊名稱: ${sourceInfo['namesToReplace'].join(', ')}');
+    final foundBases = validationResult['foundBases'] as Set<String>;
+    final foundFloors = validationResult['foundFloors'] as Set<String>;
 
+    String chosenBase = foundBases.isNotEmpty ? foundBases.first : '';
+    String chosenFloor = foundFloors.first;
+
+    if (foundBases.length > 1 || foundFloors.length > 1) {
+      final Map<String, String>? choices = await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) {
+            String? selectedBase = chosenBase;
+            String? selectedFloor = chosenFloor;
+            return StatefulBuilder(builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('偵測到名稱衝突'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('請選擇一個正確的來源基本名稱：'),
+                      ...foundBases.map((b) => RadioListTile<String>(
+                            title: Text(b.isEmpty ? '(無基本名稱)' : b),
+                            value: b,
+                            groupValue: selectedBase,
+                            onChanged: (v) => setDialogState(() => selectedBase = v),
+                          )),
+                      const SizedBox(height: 16),
+                      const Text('請選擇一個正確的來源樓層：'),
+                      ...foundFloors.map((f) => RadioListTile<String>(
+                            title: Text(f),
+                            value: f,
+                            groupValue: selectedFloor,
+                            onChanged: (v) => setDialogState(() => selectedFloor = v),
+                          )),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.of(context).pop(null),
+                      child: const Text('取消')),
+                  TextButton(
+                      onPressed: () => Navigator.of(context)
+                          .pop({'base': selectedBase!, 'floor': selectedFloor!}),
+                      child: const Text('確認')),
+                ],
+              );
+            });
+          });
+      if (choices == null) {
+        appendLog('操作已取消。');
+        setState(() => _isLoading = false);
+        return;
+      }
+      chosenBase = choices['base']!;
+      chosenFloor = choices['floor']!;
+    }
+
+    final Set<String> namesToReplace = {};
+    for (final b in foundBases) {
+      for (final f in foundFloors) {
+        namesToReplace.add('$b$f');
+      }
+    }
+    namesToReplace.addAll(foundFloors);
+
+    final sourceInfo = {
+      'outputBaseName': _outputBaseName,
+      'correctFloorName': chosenFloor,
+      'correctBaseName': chosenBase,
+      'namesToReplace': namesToReplace.toList(),
+    };
+
+    appendLog('驗證成功。選擇的來源: $chosenBase$chosenFloor');
+    appendLog('將替換以下舊名稱: ${namesToReplace.join(', ')}');
+    appendLog('指定的輸出基本名稱: $_outputBaseName');
 
     await _zipGenerator.generateZips(
       zipPath: zipPath!,
@@ -272,6 +333,15 @@ class _HomePageState extends State<HomePage> {
                 ElevatedButton(
                   onPressed: _isLoading ? null : pickOutputDir,
                   child: Text(outputDir == null ? '選擇輸出資料夾' : '輸出資料夾: $outputDir'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _baseNameController,
+                  enabled: !_isLoading,
+                  decoration: const InputDecoration(
+                    labelText: '輸出基本名稱 (例如 NUWA_TP_Sheraton_)',
+                  ),
+                  onChanged: (v) => _outputBaseName = v,
                 ),
                 const SizedBox(height: 10),
                 TextField(

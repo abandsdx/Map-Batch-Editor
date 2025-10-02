@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
+import 'package:yaml/yaml.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:path/path.dart' as p;
@@ -99,80 +100,105 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<Map<String, int>?> _getConfirmedSourceInfo(String zipPath) async {
+  String? _extractFloorName(String rawName) {
+    if (rawName.isEmpty) return null;
+    // This regex looks for patterns like "9F", "F9", "F10", "10F" case-insensitively.
+    final match = RegExp(r'(\d+F|F\d+)', caseSensitive: false).firstMatch(rawName);
+    return match?.group(0)?.toUpperCase();
+  }
+
+  Future<Map<String, dynamic>?> _getConfirmedSourceInfo(String zipPath) async {
     try {
       final bytes = await File(zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
-      final mapFile = archive.findFile('map.json');
 
+      final Set<String> foundNames = {};
+
+      // 1. Parse from filename
       final fileName = p.basename(zipPath);
-    final fileNameMatch = RegExp(r'(\d+)F\.zip$').firstMatch(fileName);
-    if (fileNameMatch == null) {
-      appendLog('錯誤：無法從檔名 $fileName 解析樓層。');
-      return null;
-    }
-    final floorFromFileName = int.parse(fileNameMatch.group(1)!);
+      final nameFromFile = _extractFloorName(fileName);
+      if (nameFromFile != null) {
+        foundNames.add(nameFromFile);
+      }
 
-    if (mapFile == null) {
-      appendLog('錯誤：在 ZIP 中找不到 map.json。');
-      return null;
-    }
+      // 2. Parse from map.json
+      final mapFile = archive.findFile('map.json');
+      if (mapFile != null) {
+        final mapData = jsonDecode(utf8.decode(mapFile.content as List<int>));
+        final nameFromJsonRaw = mapData['name'] as String?;
+        if (nameFromJsonRaw != null) {
+          final nameFromJson = _extractFloorName(nameFromJsonRaw);
+          if (nameFromJson != null) {
+            foundNames.add(nameFromJson);
+          }
+        }
+      }
 
-    final mapData = jsonDecode(utf8.decode(mapFile.content as List<int>));
-    final nameFromJson = mapData['name'] as String?;
-    if (nameFromJson == null) {
-      appendLog('錯誤：map.json 中沒有 "name" 欄位。');
-      return null;
-    }
+      // 3. Parse from graph.yml
+      final graphFile = archive.findFile('graph.yml');
+      if (graphFile != null) {
+          final graphContent = utf8.decode(graphFile.content as List<int>);
+          final graphData = loadYaml(graphContent);
+          if (graphData is Map && graphData.containsKey('name')) {
+              final nameFromGraphRaw = graphData['name'] as String?;
+              if (nameFromGraphRaw != null) {
+                  final nameFromGraph = _extractFloorName(nameFromGraphRaw);
+                  if (nameFromGraph != null) {
+                      foundNames.add(nameFromGraph);
+                  }
+              }
+          }
+      }
 
-      final jsonNameMatch = RegExp(r'^(?:F(\d+)|(\d+)F)$', caseSensitive: false).firstMatch(nameFromJson.trim());
-      if (jsonNameMatch == null) {
-        appendLog('錯誤：無法從 map.json 的名稱 "$nameFromJson" 中解析樓層。格式應為 "16F" 或 "F16"。');
+      if (foundNames.isEmpty) {
+        appendLog('錯誤：在檔名、map.json 或 graph.yml 中都找不到有效的樓層名稱。');
         return null;
       }
 
-    final floorStr = jsonNameMatch.group(1) ?? jsonNameMatch.group(2);
-    if (floorStr == null) {
-        appendLog('錯誤：從 "$nameFromJson" 解析樓層時發生未知錯誤。');
-        return null;
-    }
-    final floorFromJson = int.parse(floorStr);
-
-    if (floorFromFileName == floorFromJson) {
-      return {'correctFloor': floorFromFileName, 'floorInFile': floorFromJson};
-    }
+      if (foundNames.length == 1) {
+        final name = foundNames.first;
+        return {'correctFloorName': name, 'namesToReplace': foundNames.toList()};
+      }
 
       // Conflict detected, ask user
-      return await showDialog<Map<String, int>?>(
+      final String? chosenName = await showDialog<String>(
         context: context,
         barrierDismissible: false,
         builder: (BuildContext context) {
           return AlertDialog(
-            title: const Text('名稱衝突'),
-            content: Text('檔名樓層 (${floorFromFileName}F) 與 map.json 內部樓層 (${floorFromJson}F) 不一致。\n\n請問哪個才是正確的來源樓層？'),
+            title: const Text('偵測到多重名稱衝突'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('在不同位置偵測到以下樓層名稱，請選擇一個作為正確的來源：'),
+                const SizedBox(height: 16),
+                ...foundNames.map((name) => RadioListTile<String>(
+                  title: Text(name),
+                  value: name,
+                  groupValue: null, // We handle state outside
+                  onChanged: (value) {
+                     Navigator.of(context).pop(value);
+                  },
+                )).toList(),
+              ],
+            ),
             actions: <Widget>[
               TextButton(
-                child: Text('以檔名為準 (${floorFromFileName}F)'),
-                onPressed: () {
-                  Navigator.of(context).pop({'correctFloor': floorFromFileName, 'floorInFile': floorFromJson});
-                },
-              ),
-              TextButton(
-                child: Text('以 JSON 為準 (${floorFromJson}F)'),
-                onPressed: () {
-                  Navigator.of(context).pop({'correctFloor': floorFromJson, 'floorInFile': floorFromJson});
-                },
-              ),
-              TextButton(
                 child: const Text('取消'),
-                onPressed: () {
-                  Navigator.of(context).pop(null);
-                },
+                onPressed: () => Navigator.of(context).pop(null),
               ),
             ],
           );
         },
       );
+
+      if (chosenName == null) {
+        return null; // User cancelled
+      }
+
+      return {'correctFloorName': chosenName, 'namesToReplace': foundNames.toList()};
+
     } on FileSystemException catch (e) {
       appendLog('錯誤：無法讀取檔案。\n檔案路徑: $zipPath\n原因: ${e.message}\n請確認檔案是否存在且未被移動或刪除。');
       return null;
@@ -208,7 +234,9 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    appendLog('驗證成功。來源樓層: ${sourceInfo['correctFloor']}F, 檔案內樓層: ${sourceInfo['floorInFile']}F');
+    appendLog('驗證成功。選擇的來源樓層: ${sourceInfo['correctFloorName']}');
+    appendLog('將替換以下舊名稱: ${sourceInfo['namesToReplace'].join(', ')}');
+
 
     await _zipGenerator.generateZips(
       zipPath: zipPath!,

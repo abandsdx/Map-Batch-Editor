@@ -12,7 +12,7 @@ class _IsolateParams {
   final String outputDir;
   final int targetFloor;
   final SendPort sendPort;
-  final Map<String, int> sourceInfo;
+  final Map<String, dynamic> sourceInfo;
 
   _IsolateParams({
     required this.zipPath,
@@ -33,37 +33,42 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   try {
     log('正在處理樓層 ${params.targetFloor} ...');
 
-    final baseName = p.basename(params.zipPath);
-    final correctSourceFloor = params.sourceInfo['correctFloor']!;
-    final floorToReplace = params.sourceInfo['floorInFile']!;
+    final correctFloorName = params.sourceInfo['correctFloorName'] as String;
+    final namesToReplace = (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
+    final newFloorName = '${params.targetFloor}F';
+    final newFloorNum = params.targetFloor.toString().padLeft(2, '0');
 
-    final outZip = p.join(params.outputDir,
-        baseName.replaceAll('${correctSourceFloor}F.zip', '${params.targetFloor}F.zip'));
+    final baseName = p.basename(params.zipPath);
+    final outZip = p.join(params.outputDir, baseName.replaceAll('$correctFloorName.zip', '$newFloorName.zip'));
 
     final tempDir = await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
 
     try {
-      // Unzip
       final bytes = await File(params.zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
       for (var file in archive) {
         final filename = p.join(tempDir.path, file.name);
         if (file.isFile) {
-          final outFile = File(filename);
-          await outFile.create(recursive: true);
-          await outFile.writeAsBytes(file.content as List<int>);
+          await File(filename).create(recursive: true);
+          await File(filename).writeAsBytes(file.content as List<int>);
         } else {
           await Directory(filename).create(recursive: true);
         }
+      }
+
+      String universalReplace(String content) {
+        String result = content;
+        for (final oldName in namesToReplace) {
+          result = result.replaceAll(oldName, newFloorName);
+        }
+        return result;
       }
 
       // Modify graph.yaml
       final graphFile = File(p.join(tempDir.path, 'graph.yaml'));
       if (await graphFile.exists()) {
         var text = await graphFile.readAsString();
-        text = text.replaceAllMapped(
-            RegExp(r'(\w+_' + floorToReplace.toString() + r'F)'),
-            (m) => m.group(1)!.replaceAll('${floorToReplace}F', '${params.targetFloor}F'));
+        text = universalReplace(text);
         await graphFile.writeAsString(text);
       }
 
@@ -73,8 +78,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         var text = await mapFile.readAsString();
         final mapData = Map<String, dynamic>.from(jsonDecode(text));
         if (mapData.containsKey('name')) {
-          mapData['name'] = (mapData['name'] as String)
-              .replaceAll('${floorToReplace}F', '${params.targetFloor}F');
+          mapData['name'] = newFloorName;
         }
         await mapFile.writeAsString(jsonEncode(mapData));
       }
@@ -85,26 +89,26 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         final content = await locFile.readAsString();
         final data = loadYaml(content);
         Map newData = {};
+
+        final oldFloorNumbers = namesToReplace.map((name) {
+          final match = RegExp(r'(\d+)').firstMatch(name);
+          return match?.group(1);
+        }).where((item) => item != null).toSet();
+
         if (data is Map) {
           for (var k in data.keys) {
-            if (k == 'loc') {
-              newData[k] = data[k]; // 保留原本 loc
-            } else if (RegExp(r'^[A-Z]+[0-9]{4}$').hasMatch(k) && !k.startsWith('MA')) {
-              final prefix = RegExp(r'^([A-Z]+)').firstMatch(k)!.group(1)!;
-              final numStr = k.substring(prefix.length);
-              final newKey =
-                  '$prefix${params.targetFloor.toString().padLeft(2, '0')}${numStr.substring(2)}';
-              newData[newKey] = data[k];
-            } else {
-              newData[k] = data[k];
+            String currentKey = k;
+            for (final oldNum in oldFloorNumbers) {
+              if (oldNum != null) {
+                currentKey = currentKey.replaceAll(oldNum, newFloorNum);
+              }
             }
+            newData[currentKey] = data[k];
           }
         }
-        // 改為單行陣列輸出
         await locFile.writeAsString(_writeYamlSingleLine(newData));
       }
 
-      // Re-zip
       final encoder = ZipFileEncoder();
       encoder.create(outZip);
       await for (final entity in tempDir.list(recursive: true)) {
@@ -120,10 +124,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     }
     sendPort.send({'type': 'done'});
   } catch (e, s) {
-    sendPort.send({
-      'type': 'error',
-      'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
-    });
+    sendPort.send({'type': 'error', 'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'});
   }
 }
 
@@ -149,7 +150,7 @@ class FloorZipGenerator {
     required String outputDir,
     required String floorInput,
     required ValueChanged<String> onLog,
-    required Map<String, int> sourceInfo,
+    required Map<String, dynamic> sourceInfo,
   }) async {
     final floors = _parseFloorInput(floorInput);
     if (floors.isEmpty) {

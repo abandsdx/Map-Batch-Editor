@@ -25,9 +25,9 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       title: 'Floor ZIP Generator',
-      home: const HomePage(),
+      home: HomePage(),
     );
   }
 }
@@ -66,7 +66,7 @@ class _HomePageState extends State<HomePage> {
   void appendLog(String message) {
     if (mounted) {
       setState(() {
-        log += message + '\n';
+        log += '$message\n';
       });
       Future.delayed(const Duration(milliseconds: 50), () {
         if (_logScrollController.hasClients) {
@@ -321,7 +321,7 @@ class _HomePageState extends State<HomePage> {
       body: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -329,12 +329,12 @@ class _HomePageState extends State<HomePage> {
                   onPressed: _isLoading ? null : pickZip,
                   child: Text(zipPath == null ? '選擇來源 ZIP' : '來源 ZIP: ${p.basename(zipPath!)}'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 10.0),
                 ElevatedButton(
                   onPressed: _isLoading ? null : pickOutputDir,
                   child: Text(outputDir == null ? '選擇輸出資料夾' : '輸出資料夾: $outputDir'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 10.0),
                 TextField(
                   controller: _baseNameController,
                   enabled: !_isLoading,
@@ -343,7 +343,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   onChanged: (v) => _outputBaseName = v,
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 10.0),
                 TextField(
                   enabled: !_isLoading,
                   decoration: const InputDecoration(
@@ -351,12 +351,12 @@ class _HomePageState extends State<HomePage> {
                   ),
                   onChanged: (v) => floorInput = v,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 20.0),
                 ElevatedButton(
                   onPressed: _isLoading ? null : generateZips,
                   child: const Text('執行生成'),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 20.0),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -388,7 +388,7 @@ class _HomePageState extends State<HomePage> {
           ),
           if (_isLoading)
             Container(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withAlpha(128),
               child: const Center(
                 child: CircularProgressIndicator(),
               ),

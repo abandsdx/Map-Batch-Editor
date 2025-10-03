@@ -220,6 +220,8 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    if (!mounted) return;
+
     final foundBases = validationResult['foundBases'] as Set<String>;
     final foundFloors = validationResult['foundFloors'] as Set<String>;
 

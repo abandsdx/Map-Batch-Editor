@@ -89,7 +89,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       if (await locFile.exists()) {
         final content = await locFile.readAsString();
         final data = loadYaml(content);
-        Map newData = {};
+        final newData = <String, dynamic>{};
+        final locData = <String, dynamic>{};
 
         final oldFloorNumbers = namesToReplace.map((name) {
           final match = RegExp(r'(\d+)').firstMatch(name);
@@ -97,17 +98,22 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         }).where((item) => item != null).toSet();
 
         if (data is Map) {
-          for (var k in data.keys) {
-            String currentKey = k;
-            for (final oldNum in oldFloorNumbers) {
-              if (oldNum != null) {
-                currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
+          // Check if 'loc' key exists and its value is a Map
+          final dynamic locContent = data['loc'];
+          if (locContent is Map) {
+            for (var k in locContent.keys) {
+              String currentKey = k;
+              for (final oldNum in oldFloorNumbers) {
+                if (oldNum != null) {
+                  currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
+                }
               }
+              locData[currentKey] = locContent[k];
             }
-            newData[currentKey] = data[k];
           }
         }
-        await locFile.writeAsString(_writeYamlSingleLine(newData));
+        newData['loc'] = locData;
+        await locFile.writeAsString(_writeYaml(newData));
       }
 
       final encoder = ZipFileEncoder();
@@ -129,17 +135,26 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   }
 }
 
-// 輔助函式：把陣列寫成單行
-String _writeYamlSingleLine(Map map) {
+String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
+  final indent = '  ' * indentLevel;
+
   for (var entry in map.entries) {
     final key = entry.key;
     final value = entry.value;
-    if (value is List) {
-      final valStr = value.map((e) => e.toString()).join(', ');
-      buffer.writeln('$key: [$valStr]');
+
+    buffer.write('$indent$key:');
+
+    if (value is Map<String, dynamic> && value.isNotEmpty) {
+      buffer.writeln();
+      buffer.write(_writeYaml(value, indentLevel: indentLevel + 1));
+    } else if (value is List) {
+      final listContent = value.map((item) => item.toString()).join(', ');
+      buffer.writeln(' [$listContent]');
     } else {
-      buffer.writeln('$key: $value');
+      // Handles empty map, null, and other primitives.
+      // For an empty map, this results in just a newline.
+      buffer.writeln(value == null ? ' null' : '');
     }
   }
   return buffer.toString();

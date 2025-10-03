@@ -88,7 +88,9 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
         final content = await locFile.readAsString();
-        final data = loadYaml(content);
+        final rawData = loadYaml(content);
+        final data = _convertYamlNode(rawData); // Convert to standard Dart types
+
         final newData = <String, dynamic>{};
         final locData = <String, dynamic>{};
 
@@ -97,19 +99,30 @@ Future<void> _zipProcessor(_IsolateParams params) async {
           return match?.group(1);
         }).where((item) => item != null).toSet();
 
-        if (data is Map) {
-          // Check if 'loc' key exists and its value is a Map
-          final dynamic locContent = data['loc'];
-          if (locContent is Map) {
-            for (var k in locContent.keys) {
-              String currentKey = k;
-              for (final oldNum in oldFloorNumbers) {
-                if (oldNum != null) {
-                  currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
-                }
+        if (data is Map<String, dynamic>) {
+          // Determine the source of the location entries.
+          final Map<String, dynamic> sourceMap;
+          if (data['loc'] is Map<String, dynamic>) {
+            // Nested format: use the inner map.
+            sourceMap = data['loc'];
+          } else {
+            // Flat format: use the whole map.
+            sourceMap = data;
+          }
+
+          for (final entry in sourceMap.entries) {
+            final key = entry.key;
+            final value = entry.value;
+            // Skip the 'loc' key itself if processing a flat file that might contain 'loc: null'
+            if (key == 'loc') continue;
+
+            String currentKey = key;
+            for (final oldNum in oldFloorNumbers) {
+              if (oldNum != null) {
+                currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
               }
-              locData[currentKey] = locContent[k];
             }
+            locData[currentKey] = value;
           }
         }
         newData['loc'] = locData;
@@ -135,6 +148,21 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   }
 }
 
+// Converts Yaml types to standard Dart types (Map, List).
+dynamic _convertYamlNode(dynamic node) {
+  if (node is YamlMap) {
+    return Map<String, dynamic>.fromEntries(
+      node.entries.map(
+        (e) => MapEntry(e.key.toString(), _convertYamlNode(e.value)),
+      ),
+    );
+  }
+  if (node is YamlList) {
+    return List<dynamic>.from(node.map((e) => _convertYamlNode(e)));
+  }
+  return node;
+}
+
 String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
   final indent = '  ' * indentLevel;
@@ -145,16 +173,19 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
 
     buffer.write('$indent$key:');
 
-    if (value is Map<String, dynamic> && value.isNotEmpty) {
-      buffer.writeln();
-      buffer.write(_writeYaml(value, indentLevel: indentLevel + 1));
+    if (value is Map<String, dynamic>) {
+      if (value.isEmpty) {
+        buffer.writeln(); // key: followed by newline for empty map
+      } else {
+        buffer.writeln();
+        buffer.write(_writeYaml(value, indentLevel: indentLevel + 1));
+      }
     } else if (value is List) {
       final listContent = value.map((item) => item.toString()).join(', ');
       buffer.writeln(' [$listContent]');
     } else {
-      // Handles empty map, null, and other primitives.
-      // For an empty map, this results in just a newline.
-      buffer.writeln(value == null ? ' null' : '');
+      // Handles primitives like String, num, bool, and null.
+      buffer.writeln(' $value');
     }
   }
   return buffer.toString();

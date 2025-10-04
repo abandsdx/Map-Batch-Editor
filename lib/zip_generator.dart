@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:isolate';
-import 'dart:async'; // ✅ 補上這個
+import 'dart:async';
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yaml/yaml.dart';
@@ -34,7 +34,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     log('正在處理樓層 ${params.targetFloor} ...');
 
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
-    final namesToReplace = (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
+    final namesToReplace =
+        (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';
@@ -42,7 +43,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
 
     final outZip = p.join(params.outputDir, '$newFullName.zip');
 
-    final tempDir = await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
+    final tempDir =
+        await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
 
     try {
       final bytes = await File(params.zipPath).readAsBytes();
@@ -89,7 +91,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       if (await locFile.exists()) {
         final content = await locFile.readAsString();
         final rawData = loadYaml(content);
-        final data = _convertYamlNode(rawData); // Convert to standard Dart types
+        final data = _convertYamlNode(rawData);
 
         final newData = <String, dynamic>{};
         final locData = <String, dynamic>{};
@@ -102,43 +104,31 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             .where((item) => item != null)
             .toSet();
 
-        // Sort by length descending to replace longer matches first (e.g., '09' before '9').
-        // This is the crucial fix to prevent ambiguous replacements like 'R09' becoming 'R012'
-        // instead of the correct 'R12'. By replacing '09' first, the ambiguity is removed.
         final sortedOldFloorNumbers = oldFloorNumbers.toList()
           ..sort((a, b) => b!.length.compareTo(a!.length));
 
         if (data is Map<String, dynamic>) {
-          // Determine the source of the location entries.
           final Map<String, dynamic> sourceMap;
           if (data['loc'] is Map<String, dynamic>) {
-            // Nested format: use the inner map.
             sourceMap = data['loc'];
           } else {
-            // Flat format: use the whole map.
             sourceMap = data;
           }
 
           for (final entry in sourceMap.entries) {
             final key = entry.key;
             final value = entry.value;
-            // Skip the 'loc' key itself if processing a flat file that might contain 'loc: null'
             if (key == 'loc') continue;
 
             String currentKey = key;
-            // Iterate through sorted old numbers to find the first (and longest) match.
             for (final oldNum in sortedOldFloorNumbers) {
               if (oldNum != null) {
-                // Regex to capture the floor number and the rest of the key (the room number).
                 final regex = RegExp('^R($oldNum)(.*)\$');
                 final match = regex.firstMatch(currentKey);
 
                 if (match != null) {
-                  // The new floor number is already correctly padded.
                   final roomPart = match.group(2) ?? '';
-                  // Reconstruct the key with the new floor and original room part.
                   currentKey = 'R$newFloorNumStr$roomPart';
-                  // Break the loop once the correct replacement is made.
                   break;
                 }
               }
@@ -165,7 +155,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     }
     sendPort.send({'type': 'done'});
   } catch (e, s) {
-    sendPort.send({'type': 'error', 'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'});
+    sendPort.send(
+        {'type': 'error', 'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'});
   }
 }
 
@@ -184,6 +175,7 @@ dynamic _convertYamlNode(dynamic node) {
   return node;
 }
 
+/// ✅ 修正 loc: 區塊不多縮排
 String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
   final indent = '  ' * indentLevel;
@@ -192,20 +184,21 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
     final key = entry.key;
     final value = entry.value;
 
-    buffer.write('$indent$key: '); // Correct: space after colon.
+    buffer.write('$indent$key: ');
 
     if (value is Map<String, dynamic>) {
       if (value.isEmpty) {
         buffer.writeln();
       } else {
         buffer.writeln();
-        buffer.write(_writeYaml(value, indentLevel: indentLevel + 1));
+        final nextIndent = (key == 'loc') ? indentLevel : indentLevel + 1;
+        buffer.write(_writeYaml(value, indentLevel: nextIndent));
       }
     } else if (value is List) {
       final listContent = value.map((item) => item.toString()).join(', ');
-      buffer.writeln('[$listContent]'); // Correct: no leading space.
+      buffer.writeln('[$listContent]');
     } else {
-      buffer.writeln('$value'); // Correct: no leading space.
+      buffer.writeln('$value');
     }
   }
   return buffer.toString();
@@ -260,7 +253,7 @@ class FloorZipGenerator {
               outputDir: outputDir,
               targetFloor: floor,
               sendPort: receivePort.sendPort,
-            sourceInfo: sourceInfo,
+              sourceInfo: sourceInfo,
             ));
       } catch (e) {
         onLog("無法建立 Isolate 來處理樓層 $floor: $e");

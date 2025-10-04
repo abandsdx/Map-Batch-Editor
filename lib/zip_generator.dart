@@ -36,6 +36,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
     final namesToReplace =
         (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
+    final correctFloorName = params.sourceInfo['correctFloorName'] as String;
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';
@@ -43,8 +44,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
 
     final outZip = p.join(params.outputDir, '$newFullName.zip');
 
-    final tempDir =
-        await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
+    final tempDir = await Directory.systemTemp
+        .createTemp('floor_zip_iso_${params.targetFloor}');
 
     try {
       // 解壓縮原始 ZIP
@@ -89,51 +90,44 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       // 修改 location.yaml（保留你原本的邏輯）
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
-        final content = await locFile.readAsString();
-        final rawData = loadYaml(content);
-        final data = _convertYamlNode(rawData);
+        // 1. Get the single, confirmed source floor number
+        final sourceFloorNumMatch = RegExp(r'\d+').firstMatch(correctFloorName);
+        if (sourceFloorNumMatch == null) {
+          throw Exception("無法從 '$correctFloorName' 中提取來源樓層號碼");
+        }
+        final sourceFloorNum = int.parse(sourceFloorNumMatch.group(0)!);
 
+        // 2. Parse the file and data
+        final content = await locFile.readAsString();
+        final data = _convertYamlNode(loadYaml(content));
         final newData = <String, dynamic>{};
         final locData = <String, dynamic>{};
 
-        final oldFloorNumbers = namesToReplace
-            .map((name) {
-              final match = RegExp(r'(\d+)').firstMatch(name);
-              return match?.group(1);
-            })
-            .where((item) => item != null)
-            .toSet();
-
-        final sortedOldFloorNumbers = oldFloorNumbers.toList()
-          ..sort((a, b) => b!.length.compareTo(a!.length));
-
         if (data is Map<String, dynamic>) {
-          final Map<String, dynamic> sourceMap;
-          if (data['loc'] is Map<String, dynamic>) {
-            sourceMap = data['loc'];
-          } else {
-            sourceMap = data;
-          }
+          final Map<String, dynamic> sourceMap =
+              data['loc'] is Map<String, dynamic> ? data['loc'] : data;
 
           for (final entry in sourceMap.entries) {
             final key = entry.key;
             final value = entry.value;
-            if (key == 'loc') continue;
 
-            String currentKey = key;
-            for (final oldNum in sortedOldFloorNumbers) {
-              if (oldNum != null) {
-                final regex = RegExp('^R($oldNum)(.*)\$');
-                final match = regex.firstMatch(currentKey);
+            // 3. Parse each key and compare floor numbers
+            final keyMatch = RegExp(r'^R(\d+)(.*)$').firstMatch(key);
+            if (keyMatch != null) {
+              final keyFloorNum = int.parse(keyMatch.group(1)!);
+              final roomPart = keyMatch.group(2)!;
 
-                if (match != null) {
-                  final roomPart = match.group(2) ?? '';
-                  currentKey = 'R$newFloorNumStr$roomPart';
-                  break;
-                }
+              // 4. If floors match, rebuild key. Otherwise, keep original.
+              if (keyFloorNum == sourceFloorNum) {
+                final newKey = 'R$newFloorNumStr$roomPart';
+                locData[newKey] = value;
+              } else {
+                locData[key] = value;
               }
+            } else {
+              // Not a room key (e.g. 'loc' itself), keep original
+              locData[key] = value;
             }
-            locData[currentKey] = value;
           }
         }
         newData['loc'] = locData;
@@ -158,8 +152,10 @@ Future<void> _zipProcessor(_IsolateParams params) async {
 
     sendPort.send({'type': 'done'});
   } catch (e, s) {
-    sendPort.send(
-        {'type': 'error', 'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'});
+    sendPort.send({
+      'type': 'error',
+      'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
+    });
   }
 }
 

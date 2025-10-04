@@ -27,7 +27,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       title: 'Floor ZIP Generator',
-      home: HomePage(),
+      home: const HomePage(),
     );
   }
 }

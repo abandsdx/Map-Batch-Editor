@@ -174,7 +174,7 @@ dynamic _convertYamlNode(dynamic node) {
   if (node is YamlMap) {
     return Map<String, dynamic>.fromEntries(
       node.entries.map(
-        (e) => MapEntry(e.key.toString(), _convertYamlNode(e.value)),
+        (e) => MapEntry(e.key.toString().trim(), _convertYamlNode(e.value)),
       ),
     );
   }

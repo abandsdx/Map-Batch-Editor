@@ -71,19 +71,27 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             data['name'] = newFullName;
           }
 
-          // Update levels key
-          if (data['levels'] is Map && (data['levels'] as Map).isNotEmpty) {
+          // Update levels key by finding a match in namesToReplace
+          if (data['levels'] is Map) {
             final levelsMap = data['levels'] as Map<String, dynamic>;
-            // Assuming there's only one level defined in the source file
-            final oldLevelKey = levelsMap.keys.first;
-            final levelData = levelsMap[oldLevelKey];
-            levelsMap.remove(oldLevelKey);
-            levelsMap[newFullName] = levelData;
-          }
+            String? keyToReplace;
+            // Find the key that needs to be replaced
+            for (final key in levelsMap.keys) {
+              if (namesToReplace.contains(key)) {
+                keyToReplace = key;
+                break;
+              }
+            }
 
+            if (keyToReplace != null) {
+              // Re-insert the data with the new key
+              final levelData = levelsMap[keyToReplace];
+              levelsMap.remove(keyToReplace);
+              levelsMap[newFullName] = levelData;
+            }
+          }
           await graphFile.writeAsString(_writeYaml(data));
         }
-        // If it's not a map or something unexpected, we don't touch it.
       }
 
       // Modify map.json

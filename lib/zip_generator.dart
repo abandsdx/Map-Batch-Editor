@@ -36,7 +36,6 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
     final namesToReplace =
         (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
-    namesToReplace.sort((a, b) => b.length.compareTo(a.length));
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';
@@ -60,20 +59,31 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         }
       }
 
-      String universalReplace(String content) {
-        String result = content;
-        for (final oldName in namesToReplace) {
-          result = result.replaceAll(oldName, newFullName);
-        }
-        return result;
-      }
-
       // Modify graph.yaml
       final graphFile = File(p.join(tempDir.path, 'graph.yaml'));
       if (await graphFile.exists()) {
-        var text = await graphFile.readAsString();
-        text = universalReplace(text);
-        await graphFile.writeAsString(text);
+        final rawContent = await graphFile.readAsString();
+        final data = _convertYamlNode(loadYaml(rawContent));
+
+        if (data is Map<String, dynamic>) {
+          // Update root name
+          if (data.containsKey('name')) {
+            data['name'] = newFullName;
+          }
+
+          // Update levels key
+          if (data['levels'] is Map && (data['levels'] as Map).isNotEmpty) {
+            final levelsMap = data['levels'] as Map<String, dynamic>;
+            // Assuming there's only one level defined in the source file
+            final oldLevelKey = levelsMap.keys.first;
+            final levelData = levelsMap[oldLevelKey];
+            levelsMap.remove(oldLevelKey);
+            levelsMap[newFullName] = levelData;
+          }
+
+          await graphFile.writeAsString(_writeYaml(data));
+        }
+        // If it's not a map or something unexpected, we don't touch it.
       }
 
       // Modify map.json
@@ -189,7 +199,7 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
 
     if (value is Map<String, dynamic>) {
       if (value.isEmpty) {
-        buffer.writeln();
+        buffer.writeln('{}');
       } else {
         buffer.writeln();
         final nextIndent = (key == 'loc') ? indentLevel : indentLevel + 1;

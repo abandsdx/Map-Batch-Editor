@@ -94,10 +94,19 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         final newData = <String, dynamic>{};
         final locData = <String, dynamic>{};
 
-        final oldFloorNumbers = namesToReplace.map((name) {
-          final match = RegExp(r'(\d+)').firstMatch(name);
-          return match?.group(1);
-        }).where((item) => item != null).toSet();
+        final oldFloorNumbers = namesToReplace
+            .map((name) {
+              final match = RegExp(r'(\d+)').firstMatch(name);
+              return match?.group(1);
+            })
+            .where((item) => item != null)
+            .toSet();
+
+        // Sort by length descending to replace longer matches first (e.g., '09' before '9').
+        // This is the crucial fix to prevent ambiguous replacements like 'R09' becoming 'R012'
+        // instead of the correct 'R12'. By replacing '09' first, the ambiguity is removed.
+        final sortedOldFloorNumbers = oldFloorNumbers.toList()
+          ..sort((a, b) => b!.length.compareTo(a!.length));
 
         if (data is Map<String, dynamic>) {
           // Determine the source of the location entries.
@@ -117,7 +126,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             if (key == 'loc') continue;
 
             String currentKey = key;
-            for (final oldNum in oldFloorNumbers) {
+            for (final oldNum in sortedOldFloorNumbers) {
               if (oldNum != null) {
                 currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
               }

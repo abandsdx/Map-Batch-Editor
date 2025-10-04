@@ -38,7 +38,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';
-    final newFloorNumStr = params.targetFloor.toString();
+    final newFloorNumStr = params.targetFloor.toString().padLeft(2, '0');
 
     final outZip = p.join(params.outputDir, '$newFullName.zip');
 
@@ -126,9 +126,21 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             if (key == 'loc') continue;
 
             String currentKey = key;
+            // Iterate through sorted old numbers to find the first (and longest) match.
             for (final oldNum in sortedOldFloorNumbers) {
               if (oldNum != null) {
-                currentKey = currentKey.replaceAll(oldNum, newFloorNumStr);
+                // Regex to capture the floor number and the rest of the key (the room number).
+                final regex = RegExp('^R($oldNum)(.*)\$');
+                final match = regex.firstMatch(currentKey);
+
+                if (match != null) {
+                  // The new floor number is already correctly padded.
+                  final roomPart = match.group(2) ?? '';
+                  // Reconstruct the key with the new floor and original room part.
+                  currentKey = 'R$newFloorNumStr$roomPart';
+                  // Break the loop once the correct replacement is made.
+                  break;
+                }
               }
             }
             locData[currentKey] = value;
@@ -180,21 +192,20 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
     final key = entry.key;
     final value = entry.value;
 
-    buffer.write('$indent$key:');
+    buffer.write('$indent$key: '); // Correct: space after colon.
 
     if (value is Map<String, dynamic>) {
       if (value.isEmpty) {
-        buffer.writeln(); // key: followed by newline for empty map
+        buffer.writeln();
       } else {
         buffer.writeln();
         buffer.write(_writeYaml(value, indentLevel: indentLevel + 1));
       }
     } else if (value is List) {
       final listContent = value.map((item) => item.toString()).join(', ');
-      buffer.writeln(' [$listContent]');
+      buffer.writeln('[$listContent]'); // Correct: no leading space.
     } else {
-      // Handles primitives like String, num, bool, and null.
-      buffer.writeln(' $value');
+      buffer.writeln('$value'); // Correct: no leading space.
     }
   }
   return buffer.toString();

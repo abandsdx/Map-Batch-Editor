@@ -47,6 +47,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await Directory.systemTemp.createTemp('floor_zip_iso_${params.targetFloor}');
 
     try {
+      // 解壓縮原始 ZIP
       final bytes = await File(params.zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
       for (var file in archive) {
@@ -59,42 +60,22 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         }
       }
 
-      // Modify graph.yaml
+      // ✅ 只修改 graph.yaml 的 name 欄位
       final graphFile = File(p.join(tempDir.path, 'graph.yaml'));
       if (await graphFile.exists()) {
-        final rawContent = await graphFile.readAsString();
-        final data = _convertYamlNode(loadYaml(rawContent));
+        String content = await graphFile.readAsString();
 
-        if (data is Map<String, dynamic>) {
-          // Update root name
-          if (data.containsKey('name')) {
-            data['name'] = newFullName;
-          }
-
-          // Update levels key by finding a match in namesToReplace
-          if (data['levels'] is Map) {
-            final levelsMap = data['levels'] as Map<String, dynamic>;
-            String? keyToReplace;
-            // Find the key that needs to be replaced
-            for (final key in levelsMap.keys) {
-              if (namesToReplace.contains(key)) {
-                keyToReplace = key;
-                break;
-              }
-            }
-
-            if (keyToReplace != null) {
-              // Re-insert the data with the new key
-              final levelData = levelsMap[keyToReplace];
-              levelsMap.remove(keyToReplace);
-              levelsMap[newFullName] = levelData;
-            }
-          }
-          await graphFile.writeAsString(_writeYaml(data));
+        final nameRegex = RegExp(r'^name:\s*(.*)$', multiLine: true);
+        if (nameRegex.hasMatch(content)) {
+          content = content.replaceFirst(nameRegex, 'name: $newFullName');
+        } else {
+          content = 'name: $newFullName\n$content';
         }
+
+        await graphFile.writeAsString(content);
       }
 
-      // Modify map.json
+      // 修改 map.json 的 name 欄位
       final mapFile = File(p.join(tempDir.path, 'map.json'));
       if (await mapFile.exists()) {
         var text = await mapFile.readAsString();
@@ -105,7 +86,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await mapFile.writeAsString(jsonEncode(mapData));
       }
 
-      // Modify location.yaml
+      // 修改 location.yaml（保留你原本的邏輯）
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
         final content = await locFile.readAsString();
@@ -159,6 +140,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await locFile.writeAsString(_writeYaml(newData));
       }
 
+      // 重新壓縮成新 ZIP
       final encoder = ZipFileEncoder();
       encoder.create(outZip);
       await for (final entity in tempDir.list(recursive: true)) {
@@ -168,10 +150,12 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         }
       }
       encoder.close();
+
       log('完成: ${params.targetFloor} -> $outZip');
     } finally {
       await tempDir.delete(recursive: true);
     }
+
     sendPort.send({'type': 'done'});
   } catch (e, s) {
     sendPort.send(
@@ -194,7 +178,7 @@ dynamic _convertYamlNode(dynamic node) {
   return node;
 }
 
-/// ✅ 修正 loc: 區塊不多縮排
+/// ✅ loc 區塊不多縮排
 String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
   final indent = '  ' * indentLevel;
@@ -266,14 +250,15 @@ class FloorZipGenerator {
 
       try {
         await Isolate.spawn(
-            _zipProcessor,
-            _IsolateParams(
-              zipPath: zipPath,
-              outputDir: outputDir,
-              targetFloor: floor,
-              sendPort: receivePort.sendPort,
-              sourceInfo: sourceInfo,
-            ));
+          _zipProcessor,
+          _IsolateParams(
+            zipPath: zipPath,
+            outputDir: outputDir,
+            targetFloor: floor,
+            sendPort: receivePort.sendPort,
+            sourceInfo: sourceInfo,
+          ),
+        );
       } catch (e) {
         onLog("無法建立 Isolate 來處理樓層 $floor: $e");
         completer.complete();

@@ -36,6 +36,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
     final namesToReplace =
         (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
+    namesToReplace.sort((a, b) => b.length.compareTo(a.length));
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';

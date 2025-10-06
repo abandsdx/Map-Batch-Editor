@@ -87,17 +87,10 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await mapFile.writeAsString(jsonEncode(mapData));
       }
 
-      // 修改 location.yaml（保留你原本的邏輯）
+      // 修改 location.yaml（含 R / WL / XL 樓層轉換）
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
-        // 1. Get the single, confirmed source floor number
-        final sourceFloorNumMatch = RegExp(r'\d+').firstMatch(correctFloorName);
-        if (sourceFloorNumMatch == null) {
-          throw Exception("無法從 '$correctFloorName' 中提取來源樓層號碼");
-        }
-        final sourceFloorNum = int.parse(sourceFloorNumMatch.group(0)!);
-
-        // 2. Parse the file and data
+        // 解析 YAML
         final content = await locFile.readAsString();
         final data = _convertYamlNode(loadYaml(content));
         final newData = <String, dynamic>{};
@@ -108,31 +101,29 @@ Future<void> _zipProcessor(_IsolateParams params) async {
               data['loc'] is Map<String, dynamic> ? data['loc'] : data;
 
           for (final entry in sourceMap.entries) {
-            final key = entry.key;
+            final key = entry.key.toString();
             final value = entry.value;
 
-            // 3. Parse each key and compare floor numbers
-            final keyMatch = RegExp(r'^R(\d+)(.*)$').firstMatch(key);
-            if (keyMatch != null) {
-              final keyFloorNum = int.parse(keyMatch.group(1)!);
-              final roomPart = keyMatch.group(2)!;
+            if (key.trim() == 'loc' || value == null) continue;
 
-              // 4. If floors match, rebuild key. Otherwise, keep original.
-              if (keyFloorNum == sourceFloorNum) {
-                final newKey = 'R$newFloorNumStr$roomPart';
-                locData[newKey] = value;
-              } else {
-                locData[key] = value;
-              }
+            // 🔥 R / WL / XL 開頭，替換前兩碼樓層數字
+            final keyMatch = RegExp(r'^(R|WL|XL)(\d{2})(.*)$').firstMatch(key);
+            if (keyMatch != null) {
+              final prefix = keyMatch.group(1)!;
+              final suffix = keyMatch.group(3)!;
+              final newKey = '$prefix${params.targetFloor.toString().padLeft(2, '0')}$suffix';
+              locData[newKey] = value;
             } else {
-              // Not a room key (e.g. 'loc' itself), keep original
+              // 其他 key 不動（例如 MA05、MA06）
               locData[key] = value;
             }
           }
         }
+
         newData['loc'] = locData;
         await locFile.writeAsString(_writeYaml(newData));
       }
+
 
       // 重新壓縮成新 ZIP
       final encoder = ZipFileEncoder();

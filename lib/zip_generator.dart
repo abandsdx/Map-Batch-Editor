@@ -165,7 +165,7 @@ dynamic _convertYamlNode(dynamic node) {
   return node;
 }
 
-/// ✅ loc 區塊不多縮排
+/// ✅ loc 區塊不多縮排，且避免 loc: 後方多餘空格
 String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
   final indent = '  ' * indentLevel;
@@ -174,11 +174,12 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
     final key = entry.key;
     final value = entry.value;
 
-    buffer.write('$indent$key: ');
+    // 👇 關鍵修改：移除冒號後方的空白
+    buffer.write('$indent$key:');
 
     if (value is Map<String, dynamic>) {
       if (value.isEmpty) {
-        buffer.writeln('{}');
+        buffer.writeln(' {}');
       } else {
         buffer.writeln();
         final nextIndent = (key == 'loc') ? indentLevel : indentLevel + 1;
@@ -186,9 +187,10 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
       }
     } else if (value is List) {
       final listContent = value.map((item) => item.toString()).join(', ');
-      buffer.writeln('[$listContent]');
+      buffer.writeln(' [$listContent]');
     } else {
-      buffer.writeln('$value');
+      // 這裡再補一個空白確保格式正確
+      buffer.writeln(' $value');
     }
   }
   return buffer.toString();

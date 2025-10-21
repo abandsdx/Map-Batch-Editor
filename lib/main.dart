@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:window_size/window_size.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'zip_generator.dart';
 
 void main() {
@@ -49,12 +50,31 @@ class _HomePageState extends State<HomePage> {
   final _baseNameController = TextEditingController();
   String log = '';
   bool _isLoading = false;
+  String _appVersion = '';
 
   @override
   void dispose() {
     _logScrollController.dispose();
     _baseNameController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      setState(() {
+        final build = info.buildNumber.trim();
+        _appVersion = build.isNotEmpty ? '${info.version}+$build' : info.version;
+      });
+    } catch (_) {
+      // keep default empty version
+    }
   }
 
   void _clearLog() {
@@ -78,6 +98,22 @@ class _HomePageState extends State<HomePage> {
         }
       });
     }
+  }
+
+  void _showAbout() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'Floor ZIP Generator',
+      applicationVersion: _appVersion.isEmpty ? 'version unknown' : _appVersion,
+      children: const [
+        Text('功能:'),
+        SizedBox(height: 4),
+        Text('• 批次產生多樓層 ZIP'),
+        Text('• 自動更新 map.json 與 graph.yaml 的 name'),
+        Text('• location.yaml 中 R/WL 前綴鍵：前兩碼樓層改名 (兩位數補零)'),
+        Text('• EV/LL/MA 鍵保持不變'),
+      ],
+    );
   }
 
   Future<void> pickZip() async {
@@ -319,7 +355,16 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Floor ZIP Generator')),
+      appBar: AppBar(
+        title: const Text('Floor ZIP Generator'),
+        actions: [
+          IconButton(
+            tooltip: '關於',
+            icon: const Icon(Icons.info_outline),
+            onPressed: _showAbout,
+          ),
+        ],
+      ),
       body: Stack(
         children: [
           Padding(

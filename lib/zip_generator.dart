@@ -88,6 +88,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       }
 
       // 修改 location.yaml（含 R / WL / XL 樓層轉換）
+      // 修改 location.yaml（僅 R / WL 樓層改名；XL 已停用）
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
         // 解析 YAML
@@ -105,9 +106,10 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             final value = entry.value;
 
             if (key.trim() == 'loc' || value == null) continue;
+            // 僅 R / WL 開頭，兩位數樓層碼替換
 
             // 🔥 R / WL / XL 開頭，替換前兩碼樓層數字
-            final keyMatch = RegExp(r'^(R|WL|XL)(\d{2})(.*)$').firstMatch(key);
+            final keyMatch = RegExp(r'^(R|WL)(\d{2})(.*)$').firstMatch(key);
             if (keyMatch != null) {
               final prefix = keyMatch.group(1)!;
               final suffix = keyMatch.group(3)!;
@@ -119,6 +121,8 @@ Future<void> _zipProcessor(_IsolateParams params) async {
             }
           }
         }
+
+        // 不補固定模板：僅進行樓層改名
 
         newData['loc'] = locData;
         await locFile.writeAsString(_writeYaml(newData));

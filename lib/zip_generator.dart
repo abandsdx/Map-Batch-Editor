@@ -287,7 +287,7 @@ class FloorZipGenerator {
     }
 
     await Future.wait(completers);
-    onLog('??遙?歇摰???);
+    onLog('All tasks completed.');
   }
 
   List<int> _parseFloorInput(String input) {

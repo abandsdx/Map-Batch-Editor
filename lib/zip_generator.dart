@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:async';
@@ -31,16 +31,13 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   }
 
   try {
-    log('正在處理樓層 ${params.targetFloor} ...');
+    log('甇???璅惜 ${params.targetFloor} ...');
 
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
-    final namesToReplace =
-        (params.sourceInfo['namesToReplace'] as List<dynamic>).cast<String>();
     final correctFloorName = params.sourceInfo['correctFloorName'] as String;
 
     final newFloorIdentifier = '${params.targetFloor}F';
     final newFullName = '$outputBaseName$newFloorIdentifier';
-    final newFloorNumStr = params.targetFloor.toString().padLeft(2, '0');
 
     final outZip = p.join(params.outputDir, '$newFullName.zip');
 
@@ -48,7 +45,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         .createTemp('floor_zip_iso_${params.targetFloor}');
 
     try {
-      // 解壓縮原始 ZIP
+      // 閫??蝮桀?憪?ZIP
       final bytes = await File(params.zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
       for (var file in archive) {
@@ -61,7 +58,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         }
       }
 
-      // ✅ 只修改 graph.yaml 的 name 欄位
+      // ???芯耨??graph.yaml ??name 甈?
       final graphFile = File(p.join(tempDir.path, 'graph.yaml'));
       if (await graphFile.exists()) {
         String content = await graphFile.readAsString();
@@ -76,7 +73,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await graphFile.writeAsString(content);
       }
 
-      // 修改 map.json 的 name 欄位
+      // 靽格 map.json ??name 甈?
       final mapFile = File(p.join(tempDir.path, 'map.json'));
       if (await mapFile.exists()) {
         var text = await mapFile.readAsString();
@@ -87,11 +84,11 @@ Future<void> _zipProcessor(_IsolateParams params) async {
         await mapFile.writeAsString(jsonEncode(mapData));
       }
 
-      // 修改 location.yaml（含 R / WL / XL 樓層轉換）
-      // 修改 location.yaml（僅 R / WL 樓層改名；XL 已停用）
+      // 靽格 location.yaml嚗 R / WL / XL 璅惜頧?嚗?
+      // 靽格 location.yaml嚗? R / WL 璅惜?孵?嚗L 撌脣??剁?
       final locFile = File(p.join(tempDir.path, 'location.yaml'));
       if (await locFile.exists()) {
-        // 解析 YAML
+        // 閫?? YAML
         final content = await locFile.readAsString();
         final data = _convertYamlNode(loadYaml(content));
         final newData = <String, dynamic>{};
@@ -101,35 +98,66 @@ Future<void> _zipProcessor(_IsolateParams params) async {
           final Map<String, dynamic> sourceMap =
               data['loc'] is Map<String, dynamic> ? data['loc'] : data;
 
+          // 1) ?? UI 閬??韌嚗??嚗?
+          final List<dynamic>? override = params.sourceInfo['overridePrefixes'] as List<dynamic>?;
+          Set<String> renamePrefixes = override?.map((e) => e.toString()).toSet() ?? {};
+
+          if (renamePrefixes.isEmpty) {
+            // 2) ???菜葫?舀???韌嚗?摮?><?拐??? 銝雿蝑靘?璅惜嚗???EV/LL/MA
+            final floorDigits = RegExp(r'(\d+)').firstMatch(correctFloorName)?.group(1);
+            final baselineFloor2 = floorDigits == null
+                ? null
+                : int.tryParse(floorDigits)?.toString().padLeft(2, '0');
+            
+            if (baselineFloor2 != null) {
+              final captureRe = RegExp(r'^([A-Za-z]+)(\d{2})(.*)$');
+              for (final k in sourceMap.keys.map((e) => e.toString())) {
+                final m = captureRe.firstMatch(k);
+                if (m != null) {
+                  final prefix = m.group(1)!;
+                  final n2 = m.group(2)!;
+                  if (n2 == baselineFloor2 ) {
+                    renamePrefixes.add(prefix);
+                  }
+                }
+              }
+            }
+            if (renamePrefixes.isEmpty) {
+              renamePrefixes.addAll({'R', 'WL'});
+            }
+          }
+          log('?孵??韌: ${renamePrefixes.join(', ')}');
+          final renameRe = RegExp('^(${renamePrefixes.join('|')})(\\d{2})(.*)');
+
           for (final entry in sourceMap.entries) {
             final key = entry.key.toString();
             final value = entry.value;
 
             if (key.trim() == 'loc' || value == null) continue;
-            // 僅 R / WL 開頭，兩位數樓層碼替換
+            // ??R / WL ?嚗雿璅惜蝣潭??
 
-            // 🔥 R / WL / XL 開頭，替換前兩碼樓層數字
-            final keyMatch = RegExp(r'^(R|WL)(\d{2})(.*)$').firstMatch(key);
-            if (keyMatch != null) {
-              final prefix = keyMatch.group(1)!;
-              final suffix = keyMatch.group(3)!;
+            // ? R / WL / XL ?嚗???拍Ⅳ璅惜?詨?
+            final km = renameRe.firstMatch(key);
+            if (km != null) {
+              final prefix = km.group(1)!;
+              final suffix = km.group(3)!;
               final newKey = '$prefix${params.targetFloor.toString().padLeft(2, '0')}$suffix';
               locData[newKey] = value;
             } else {
-              // 其他 key 不動（例如 MA05、MA06）
+              // ?嗡? key 銝?嚗?憒?MA05?A06嚗?
               locData[key] = value;
             }
           }
         }
 
-        // 不補固定模板：僅進行樓層改名
+        // 銝??箏?璅⊥嚗??脰?璅惜?孵?
 
         newData['loc'] = locData;
         await locFile.writeAsString(_writeYaml(newData));
       }
 
 
-      // 重新壓縮成新 ZIP
+      // ?憯葬? ZIP
       final encoder = ZipFileEncoder();
       encoder.create(outZip);
       await for (final entity in tempDir.list(recursive: true)) {
@@ -140,7 +168,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       }
       encoder.close();
 
-      log('完成: ${params.targetFloor} -> $outZip');
+      log('摰?: ${params.targetFloor} -> $outZip');
     } finally {
       await tempDir.delete(recursive: true);
     }
@@ -149,7 +177,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   } catch (e, s) {
     sendPort.send({
       'type': 'error',
-      'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
+      'payload': '??璅惜 ${params.targetFloor} 憭望?: $e\n$s'
     });
   }
 }
@@ -169,7 +197,7 @@ dynamic _convertYamlNode(dynamic node) {
   return node;
 }
 
-/// ✅ loc 區塊不多縮排，且避免 loc: 後方多餘空格
+/// ??loc ?憛?憭葬??銝??loc: 敺憭?蝛箸
 String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
   final buffer = StringBuffer();
   final indent = '  ' * indentLevel;
@@ -178,7 +206,7 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
     final key = entry.key;
     final value = entry.value;
 
-    // 👇 關鍵修改：移除冒號後方的空白
+    // ?? ?靽格嚗宏?文????寧?蝛箇
     buffer.write('$indent$key:');
 
     if (value is Map<String, dynamic>) {
@@ -193,7 +221,7 @@ String _writeYaml(Map<String, dynamic> map, {int indentLevel = 0}) {
       final listContent = value.map((item) => item.toString()).join(', ');
       buffer.writeln(' [$listContent]');
     } else {
-      // 這裡再補一個空白確保格式正確
+      // ?ㄐ??銝?征?賜Ⅱ靽撘迤蝣?
       buffer.writeln(' $value');
     }
   }
@@ -210,11 +238,11 @@ class FloorZipGenerator {
   }) async {
     final floors = _parseFloorInput(floorInput);
     if (floors.isEmpty) {
-      onLog('請輸入有效樓層，例如: 4,5-6,8');
+      onLog('隢撓?交???撅歹?靘?: 4,5-6,8');
       return;
     }
 
-    onLog('將生成樓層: ${floors.join(',')}');
+    onLog('撠???撅? ${floors.join(',')}');
 
     final completers = <Future>[];
     for (var floor in floors) {
@@ -253,13 +281,13 @@ class FloorZipGenerator {
           ),
         );
       } catch (e) {
-        onLog("無法建立 Isolate 來處理樓層 $floor: $e");
+        onLog("?⊥?撱箇? Isolate 靘???撅?$floor: $e");
         completer.complete();
       }
     }
 
     await Future.wait(completers);
-    onLog('所有任務已完成。');
+    onLog('??遙?歇摰???);
   }
 
   List<int> _parseFloorInput(String input) {
@@ -285,3 +313,4 @@ class FloorZipGenerator {
     return sorted;
   }
 }
+

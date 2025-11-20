@@ -31,7 +31,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   }
 
   try {
-    log('甇???璅惜 ${params.targetFloor} ...');
+    log('開始處理樓層 ${params.targetFloor} ...');
 
     final outputBaseName = params.sourceInfo['outputBaseName'] as String;
     final correctFloorName = params.sourceInfo['correctFloorName'] as String;
@@ -110,23 +110,25 @@ Future<void> _zipProcessor(_IsolateParams params) async {
                 : int.tryParse(floorDigits)?.toString().padLeft(2, '0');
             
             if (baselineFloor2 != null) {
-              final captureRe = RegExp(r'^([A-Za-z]+)(\d{2})(.*)$');
-              for (final k in sourceMap.keys.map((e) => e.toString())) {
-                final m = captureRe.firstMatch(k);
-                if (m != null) {
-                  final prefix = m.group(1)!;
-                  final n2 = m.group(2)!;
-                  if (n2 == baselineFloor2 ) {
-                    renamePrefixes.add(prefix);
-                  }
-                }
+          final captureRe = RegExp(r'^([A-Za-z]+)(\d{2})(.*)$');
+          for (final k in sourceMap.keys.map((e) => e.toString())) {
+            final m = captureRe.firstMatch(k);
+            if (m != null) {
+              final prefix = m.group(1)!;
+              final n2 = m.group(2)!;
+              final suffix = m.group(3)?.trim() ?? '';
+              if (suffix.isEmpty) continue;
+              if (n2 == baselineFloor2 ) {
+                renamePrefixes.add(prefix);
               }
+            }
+          }
             }
             if (renamePrefixes.isEmpty) {
               renamePrefixes.addAll({'R', 'WL'});
             }
           }
-          log('?孵??韌: ${renamePrefixes.join(', ')}');
+          log('套用前綴: ${renamePrefixes.join(', ')}');
           final renameRe = RegExp('^(${renamePrefixes.join('|')})(\\d{2})(.*)');
 
           for (final entry in sourceMap.entries) {
@@ -168,7 +170,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
       }
       encoder.close();
 
-      log('摰?: ${params.targetFloor} -> $outZip');
+      log('完成: ${params.targetFloor} -> $outZip');
     } finally {
       await tempDir.delete(recursive: true);
     }
@@ -177,7 +179,7 @@ Future<void> _zipProcessor(_IsolateParams params) async {
   } catch (e, s) {
     sendPort.send({
       'type': 'error',
-      'payload': '??璅惜 ${params.targetFloor} 憭望?: $e\n$s'
+      'payload': '處理樓層 ${params.targetFloor} 失敗: $e\n$s'
     });
   }
 }
@@ -238,11 +240,11 @@ class FloorZipGenerator {
   }) async {
     final floors = _parseFloorInput(floorInput);
     if (floors.isEmpty) {
-      onLog('隢撓?交???撅歹?靘?: 4,5-6,8');
+      onLog('請輸入要套用的樓層 (例如: 4,5-6,8)');
       return;
     }
 
-    onLog('撠???撅? ${floors.join(',')}');
+    onLog('將輸出的樓層: ${floors.join(',')}');
 
     final completers = <Future>[];
     for (var floor in floors) {

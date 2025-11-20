@@ -1,12 +1,23 @@
 import 'dart:convert';
-import 'package:archive/archive.dart';
-import 'package:flutter/material.dart';
-import 'package:yaml/yaml.dart';
-import 'package:file_picker/file_picker.dart';
+
 import 'dart:io';
+
+import 'package:archive/archive.dart';
+
 import 'package:path/path.dart' as p;
-import 'package:window_size/window_size.dart';
+
 import 'package:package_info_plus/package_info_plus.dart';
+
+import 'package:window_size/window_size.dart';
+
+import 'package:file_picker/file_picker.dart';
+
+import 'package:flutter/material.dart';
+
+import 'package:flutter/services.dart';
+
+import 'package:yaml/yaml.dart';
+
 import 'zip_generator.dart';
 
 void main() {
@@ -14,8 +25,11 @@ void main() {
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     setWindowTitle('Floor ZIP Generator');
+
     setWindowMinSize(const Size(400, 600));
+
     setWindowMaxSize(Size.infinite);
+
     setWindowFrame(const Rect.fromLTWH(100, 100, 400, 600));
   }
 
@@ -24,80 +38,103 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
       title: 'Floor ZIP Generator',
-      home: const HomePage(),
+      home: HomePage(),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
   final _zipGenerator = FloorZipGenerator();
+
   final _logScrollController = ScrollController();
 
   String? zipPath;
-  String? outputDir;
-  String floorInput = '';
-  String _outputBaseName = '';
-  final _baseNameController = TextEditingController();
-  String log = '';
-  bool _isLoading = false;
-  String _appVersion = '';
 
-  @override
-  void dispose() {
-    _logScrollController.dispose();
-    _baseNameController.dispose();
-    super.dispose();
-  }
+  String? outputDir;
+
+  String floorInput = '';
+
+  String _outputBaseName = '';
+
+  final _baseNameController = TextEditingController();
+
+  String log = '';
+
+  bool _isLoading = false;
+
+  String _appVersion = '';
 
   @override
   void initState() {
     super.initState();
+
     _loadVersion();
+  }
+
+  @override
+  void dispose() {
+    _logScrollController.dispose();
+
+    _baseNameController.dispose();
+
+    super.dispose();
   }
 
   Future<void> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
+
       setState(() {
         final build = info.buildNumber.trim();
-        _appVersion = build.isNotEmpty ? '${info.version}+$build' : info.version;
+
+        _appVersion =
+            build.isNotEmpty ? '${info.version}+$build' : info.version;
       });
-    } catch (_) {
-      // keep default empty version
-    }
+    } catch (_) {}
   }
 
   void _clearLog() {
-    setState(() {
-      log = '';
-    });
+    setState(() => log = '');
+  }
+
+  void _copyLog() {
+    if (log.trim().isEmpty) return;
+
+    Clipboard.setData(ClipboardData(text: log));
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已複製執行紀錄')),
+    );
   }
 
   void appendLog(String message) {
-    if (mounted) {
-      setState(() {
-        log += '$message\n';
-      });
-      Future.delayed(const Duration(milliseconds: 50), () {
-        if (_logScrollController.hasClients) {
-          _logScrollController.animateTo(
-            _logScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
+    if (!mounted) return;
+
+    setState(() => log += '$message\n');
+
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _showAbout() {
@@ -106,34 +143,38 @@ class _HomePageState extends State<HomePage> {
       applicationName: 'Floor ZIP Generator',
       applicationVersion: _appVersion.isEmpty ? 'version unknown' : _appVersion,
       children: const [
-        Text('功能:'),
+        Text('注意：'),
         SizedBox(height: 4),
-        Text('• 批次產生多樓層 ZIP'),
-        Text('• 自動更新 map.json 與 graph.yaml 的 name'),
-        Text('• location.yaml 中 R/WL 前綴鍵：前兩碼樓層改名 (兩位數補零)'),
-        Text('• EV/LL/MA 鍵保持不變'),
+        Text('• 可一次批量產出多個樓層 ZIP'),
+        Text('• 自動更新 map.json 與 graph.yaml 中的 name'),
+        Text('• 僅重新命名包含房號與區域碼的 location.yaml 前綴'),
       ],
     );
   }
 
   Future<void> pickZip() async {
     if (_isLoading) return;
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
-    );
+
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: ['zip']);
+
     if (result != null && result.files.single.path != null) {
       final newPath = result.files.single.path!;
+
       final baseName = p.basename(newPath);
-      final match = RegExp(r'^(.*?)(_?)(F?\d+F?)(.*\.zip)$', caseSensitive: false).firstMatch(baseName);
+
+      final parts = _extractNameParts(baseName);
 
       setState(() {
         zipPath = newPath;
-        if (match != null) {
-          _outputBaseName = '${match.group(1)}${match.group(2)}';
+
+        if (parts != null) {
+          _outputBaseName = parts['base'] ?? '';
+
           _baseNameController.text = _outputBaseName;
         } else {
           _outputBaseName = '';
+
           _baseNameController.text = '';
         }
       });
@@ -142,88 +183,193 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> pickOutputDir() async {
     if (_isLoading) return;
-    String? dir = await FilePicker.platform.getDirectoryPath();
+
+    final dir = await FilePicker.platform.getDirectoryPath();
+
     if (dir != null) {
-      setState(() {
-        outputDir = dir;
-      });
+      setState(() => outputDir = dir);
     }
   }
 
   Map<String, String>? _extractNameParts(String rawName) {
     if (rawName.isEmpty) return null;
-    final cleanName = rawName.replaceAll('.zip', '');
-    // Finds a floor identifier like '9F' or 'F10' at the end of the string.
-    final match = RegExp(r'(F?\d+F?)$', caseSensitive: false).firstMatch(cleanName);
-    if (match != null) {
-      final floor = match.group(0)!.toUpperCase();
-      final base = cleanName.substring(0, match.start);
-      return {'base': base, 'floor': floor};
+
+    final clean =
+        rawName.replaceAll(RegExp(r'\.zip$', caseSensitive: false), '');
+
+    final pattern = RegExp(
+      r'([_\-\s]*)(B?\d+|F\d+|\d+)(\s*(?:F|樓|层|層|floor))?$',
+      caseSensitive: false,
+    );
+
+    final sanitized = clean.trimRight();
+
+    final m = pattern.firstMatch(sanitized);
+
+    if (m != null) {
+      final prefix = m.group(1) ?? '';
+
+      final digitsPart = (m.group(2) ?? '').toUpperCase();
+
+      final base = sanitized.substring(0, m.start) + prefix;
+
+      final suffixRaw = (m.group(3) ?? '').trim();
+
+      String suffix = '';
+
+      if (suffixRaw.isNotEmpty) {
+        final noSpace = suffixRaw.replaceAll(RegExp(r'\s+'), '');
+
+        final upper = noSpace.toUpperCase();
+
+        if (upper == 'F' || upper == 'FLOOR') {
+          suffix = 'F';
+        } else if (noSpace == '樓' || noSpace == '层' || noSpace == '層') {
+          suffix = '樓';
+        } else {
+          suffix = upper;
+        }
+      }
+
+      final floorToken = (digitsPart + suffix).trim();
+
+      if (floorToken.isEmpty) return null;
+
+      return {'base': base, 'floor': floorToken};
     }
+
     return null;
   }
 
-  Future<Map<String, dynamic>?> _getConfirmedSourceInfo(String zipPath) async {
+  Future<String?> _detectSourceFloorFromZip(String zipPath) async {
     try {
       final bytes = await File(zipPath).readAsBytes();
+
       final archive = ZipDecoder().decodeBytes(bytes);
 
-      final Set<String> foundBases = {};
-      final Set<String> foundFloors = {};
+      // 1. from filename
 
-      void addParts(Map<String, String>? parts) {
-        if (parts != null) {
-          // Only add non-empty base names. An empty base is valid (e.g. for "9F").
-          foundBases.add(parts['base']!);
-          if (parts['floor']!.isNotEmpty) foundFloors.add(parts['floor']!);
-        }
-      }
+      final fn = p.basename(zipPath);
 
-      // 1. From filename
-      addParts(_extractNameParts(p.basename(zipPath)));
+      final p1 = _extractNameParts(fn);
 
-      // 2. From map.json
+      if (p1 != null && p1['floor']!.isNotEmpty) return p1['floor'];
+
+      // 2. from map.json
+
       final mapFile = archive.findFile('map.json');
+
       if (mapFile != null) {
         final mapData = jsonDecode(utf8.decode(mapFile.content as List<int>));
-        final nameFromJsonRaw = mapData['name'] as String?;
-        if (nameFromJsonRaw != null) {
-          addParts(_extractNameParts(nameFromJsonRaw));
+
+        final n = mapData['name'] as String?;
+
+        final p2 = n == null ? null : _extractNameParts(n);
+
+        if (p2 != null && p2['floor']!.isNotEmpty) return p2['floor'];
+      }
+
+      // 3. from graph.yml
+
+      final graphFile =
+          archive.findFile('graph.yml') ?? archive.findFile('graph.yaml');
+
+      if (graphFile != null) {
+        final yaml = utf8.decode(graphFile.content as List<int>);
+
+        final data = loadYaml(yaml);
+
+        if (data is Map && data.containsKey('name')) {
+          final n = data['name'] as String?;
+
+          final p3 = n == null ? null : _extractNameParts(n);
+
+          if (p3 != null && p3['floor']!.isNotEmpty) return p3['floor'];
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  Future<Set<String>> _detectRenamePrefixesFromZip(
+      String zipPath, String chosenFloor) async {
+    final Set<String> prefixes = {};
+
+    try {
+      final bytes = await File(zipPath).readAsBytes();
+
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      final locFile =
+          archive.findFile('location.yaml') ?? archive.findFile('location.yml');
+
+      if (locFile == null) return prefixes;
+
+      final content = utf8.decode(locFile.content as List<int>);
+
+      final raw = loadYaml(content);
+
+      Map<String, dynamic>? map;
+
+      if (raw is YamlMap) {
+        map = Map<String, dynamic>.fromEntries(
+            raw.entries.map((e) => MapEntry(e.key.toString(), e.value)));
+      }
+
+      if (map == null) return prefixes;
+
+      final src =
+          (map['loc'] is Map) ? Map<String, dynamic>.from(map['loc']) : map;
+
+      final digits = RegExp(r'(\d+)').firstMatch(chosenFloor)?.group(1);
+
+      if (digits == null) return prefixes;
+
+      final floor2 = int.tryParse(digits)?.toString().padLeft(2, '0');
+
+      if (floor2 == null) return prefixes;
+
+      // 固定不改名前綴（含 XL）
+
+      final cap = RegExp(r'^([A-Za-z]+)(\d{2})(.*)$');
+
+      for (final k in src.keys.map((e) => e.toString())) {
+        final m = cap.firstMatch(k);
+
+        if (m != null) {
+          final prefix = m.group(1)!;
+
+          final n2 = m.group(2)!;
+
+          final suffix = m.group(3)?.trim() ?? '';
+
+          if (suffix.isEmpty) continue;
+
+          if (n2 == floor2) prefixes.add(prefix);
         }
       }
 
-      // 3. From graph.yml
-      final graphFile = archive.findFile('graph.yml');
-      if (graphFile != null) {
-          final graphContent = utf8.decode(graphFile.content as List<int>);
-          final graphData = loadYaml(graphContent);
-          if (graphData is Map && graphData.containsKey('name')) {
-              final nameFromGraphRaw = graphData['name'] as String?;
-              if (nameFromGraphRaw != null) {
-                  addParts(_extractNameParts(nameFromGraphRaw));
-              }
+      // 若未偵測到任何（來源樓層不吻合的情況），退回「忽略樓層碼」的抓取
+
+      if (prefixes.isEmpty) {
+        for (final k in src.keys.map((e) => e.toString())) {
+          final m = cap.firstMatch(k);
+
+          if (m != null) {
+            final suffix = m.group(3)?.trim() ?? '';
+
+            if (suffix.isEmpty) continue;
+
+            final prefix = m.group(1)!;
+
+            prefixes.add(prefix);
           }
+        }
       }
+    } catch (_) {}
 
-      if (foundFloors.isEmpty) {
-        appendLog('錯誤：在任何來源中都找不到有效的樓層標識 (例如 9F, F10)。');
-        return null;
-      }
-
-      // We will show a dialog in the next step. For now, this step's goal is parsing.
-      // The lists of found names will be used to build the dialog.
-      return {
-        'foundBases': foundBases,
-        'foundFloors': foundFloors,
-      };
-
-    } on FileSystemException catch (e) {
-      appendLog('錯誤：無法讀取檔案。\n檔案路徑: $zipPath\n原因: ${e.message}\n請確認檔案是否存在且未被移動或刪除。');
-      return null;
-    } catch (e) {
-      appendLog('驗證過程中發生未知錯誤: $e');
-      return null;
-    }
+    return prefixes;
   }
 
   Future<void> generateZips() async {
@@ -235,64 +381,69 @@ class _HomePageState extends State<HomePage> {
     });
 
     if (zipPath == null) {
-      appendLog('請先選擇來源 ZIP');
+      appendLog('請選擇來源 ZIP');
       setState(() => _isLoading = false);
       return;
     }
+
     if (outputDir == null) {
-      appendLog('請先選擇輸出資料夾');
+      appendLog('請選擇輸出資料夾');
       setState(() => _isLoading = false);
       return;
     }
-    if (_outputBaseName.isEmpty && !RegExp(r'^\d+$').hasMatch(floorInput)) {
-        appendLog('警告：未指定輸出基本名稱，將只使用樓層號碼作為檔名。');
-    }
 
+    // detect source floor
 
-    final validationResult = await _getConfirmedSourceInfo(zipPath!);
-    if (validationResult == null) {
-      appendLog('操作已取消或驗證失敗。');
+    final srcFloor = await _detectSourceFloorFromZip(zipPath!);
+
+    if (srcFloor == null) {
+      appendLog('無法從 ZIP 取得來源樓層 (例如 16F)');
       setState(() => _isLoading = false);
       return;
     }
+
+    // build namesToReplace (not used but kept for compatibility)
+
+    final namesToReplace = <String>{srcFloor};
+
+    // detect prefixes and let user choose
+
+    if (!mounted) return; // guard context
+
+    final autoPrefixes = await _detectRenamePrefixesFromZip(zipPath!, srcFloor);
 
     if (!mounted) return;
 
-    final foundBases = validationResult['foundBases'] as Set<String>;
-    final foundFloors = validationResult['foundFloors'] as Set<String>;
+    final Set<String> initial = {
+      ...(autoPrefixes.isNotEmpty ? autoPrefixes : {'R', 'WL'})
+    };
 
-    String chosenBase = foundBases.isNotEmpty ? foundBases.first : '';
-    String chosenFloor = foundFloors.first;
+    Set<String>? chosen;
 
-    if (foundBases.length > 1 || foundFloors.length > 1) {
-      final Map<String, String>? choices = await showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) {
-            String? selectedBase = chosenBase;
-            String? selectedFloor = chosenFloor;
-            return StatefulBuilder(builder: (context, setDialogState) {
+    if (initial.isNotEmpty) {
+      chosen = await showDialog<Set<String>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          final Map<String, bool> state = {for (final p in initial) p: true};
+
+          return StatefulBuilder(
+            builder: (context, setState) {
               return AlertDialog(
-                title: const Text('偵測到名稱衝突'),
+                title: const Text('選擇要改名的前綴'),
                 content: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('請選擇一個正確的來源基本名稱：'),
-                      ...foundBases.map((b) => RadioListTile<String>(
-                            title: Text(b.isEmpty ? '(無基本名稱)' : b),
-                            value: b,
-                            groupValue: selectedBase,
-                            onChanged: (v) => setDialogState(() => selectedBase = v),
-                          )),
-                      const SizedBox(height: 16),
-                      const Text('請選擇一個正確的來源樓層：'),
-                      ...foundFloors.map((f) => RadioListTile<String>(
-                            title: Text(f),
-                            value: f,
-                            groupValue: selectedFloor,
-                            onChanged: (v) => setDialogState(() => selectedFloor = v),
+                      const Text('自動偵測到以下前綴，請勾選要改名的：'),
+                      const SizedBox(height: 8),
+                      ...state.keys.map((p) => CheckboxListTile(
+                            title: Text(p),
+                            value: state[p]!,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            onChanged: (v) =>
+                                setState(() => state[p] = v ?? false),
                           )),
                     ],
                   ),
@@ -302,40 +453,35 @@ class _HomePageState extends State<HomePage> {
                       onPressed: () => Navigator.of(context).pop(null),
                       child: const Text('取消')),
                   TextButton(
-                      onPressed: () => Navigator.of(context)
-                          .pop({'base': selectedBase!, 'floor': selectedFloor!}),
-                      child: const Text('確認')),
+                    onPressed: () => Navigator.of(context).pop(state.entries
+                        .where((e) => e.value)
+                        .map((e) => e.key)
+                        .toSet()),
+                    child: const Text('確定'),
+                  ),
                 ],
               );
-            });
-          });
-      if (choices == null) {
-        appendLog('操作已取消。');
+            },
+          );
+        },
+      );
+
+      if (chosen == null) {
+        appendLog('已取消');
         setState(() => _isLoading = false);
         return;
       }
-      chosenBase = choices['base']!;
-      chosenFloor = choices['floor']!;
+
+      appendLog('將改名前綴: ${chosen.join(', ')}');
     }
 
-    final Set<String> namesToReplace = {};
-    for (final b in foundBases) {
-      for (final f in foundFloors) {
-        namesToReplace.add('$b$f');
-      }
-    }
-    namesToReplace.addAll(foundFloors);
-
-    final sourceInfo = {
+    final sourceInfo = <String, dynamic>{
       'outputBaseName': _outputBaseName,
-      'correctFloorName': chosenFloor,
-      'correctBaseName': chosenBase,
+      'correctFloorName': srcFloor,
+      'correctBaseName': '',
       'namesToReplace': namesToReplace.toList(),
+      if (chosen != null) 'overridePrefixes': chosen.toList(),
     };
-
-    appendLog('驗證成功。選擇的來源: $chosenBase$chosenFloor');
-    appendLog('將替換以下舊名稱: ${namesToReplace.join(', ')}');
-    appendLog('指定的輸出基本名稱: $_outputBaseName');
 
     await _zipGenerator.generateZips(
       zipPath: zipPath!,
@@ -345,24 +491,23 @@ class _HomePageState extends State<HomePage> {
       sourceInfo: sourceInfo,
     );
 
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-      });
-    }
+    if (!mounted) return;
+
+    setState(() => _isLoading = false);
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool hasLogText = log.trim().isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Floor ZIP Generator'),
         actions: [
           IconButton(
-            tooltip: '關於',
-            icon: const Icon(Icons.info_outline),
-            onPressed: _showAbout,
-          ),
+              tooltip: '關於',
+              icon: const Icon(Icons.info_outline),
+              onPressed: _showAbout),
         ],
       ),
       body: Stack(
@@ -374,72 +519,74 @@ class _HomePageState extends State<HomePage> {
               children: [
                 ElevatedButton(
                   onPressed: _isLoading ? null : pickZip,
-                  child: Text(zipPath == null ? '選擇來源 ZIP' : '來源 ZIP: ${p.basename(zipPath!)}'),
+                  child: Text(zipPath == null
+                      ? '選擇來源 ZIP'
+                      : '來源 ZIP: ${p.basename(zipPath!)}'),
                 ),
-                const SizedBox(height: 10.0),
+                const SizedBox(height: 10),
                 ElevatedButton(
                   onPressed: _isLoading ? null : pickOutputDir,
-                  child: Text(outputDir == null ? '選擇輸出資料夾' : '輸出資料夾: $outputDir'),
+                  child:
+                      Text(outputDir == null ? '選擇輸出資料夾' : '輸出資料夾: $outputDir'),
                 ),
-                const SizedBox(height: 10.0),
+                const SizedBox(height: 10),
                 TextField(
                   controller: _baseNameController,
                   enabled: !_isLoading,
                   decoration: const InputDecoration(
-                    labelText: '輸出基本名稱 (例如 NUWA_TP_Sheraton_)',
-                  ),
+                      labelText: '輸出基底名稱 (例: NUWA_TP_Sheraton_)'),
                   onChanged: (v) => _outputBaseName = v,
                 ),
-                const SizedBox(height: 10.0),
+                const SizedBox(height: 10),
                 TextField(
                   enabled: !_isLoading,
-                  decoration: const InputDecoration(
-                    labelText: '目標樓層 (支援範圍，例如 4,5-8,10)',
-                  ),
+                  decoration:
+                      const InputDecoration(labelText: '目標樓層 (例如: 4,5-8,10)'),
                   onChanged: (v) => floorInput = v,
                 ),
-                const SizedBox(height: 20.0),
+                const SizedBox(height: 20),
                 ElevatedButton(
                   onPressed: _isLoading ? null : generateZips,
-                  child: const Text('執行生成'),
+                  child: const Text('開始產生'),
                 ),
-                const SizedBox(height: 20.0),
+                const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('執行日誌', style: Theme.of(context).textTheme.titleMedium),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: _isLoading ? null : _clearLog,
-                      tooltip: '清除日誌',
+                    Text('執行紀錄',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: '複製紀錄',
+                          onPressed: hasLogText ? _copyLog : null,
+                          icon: const Icon(Icons.copy),
+                        ),
+                        IconButton(
+                          tooltip: '清除紀錄',
+                          onPressed: _isLoading ? null : _clearLog,
+                          icon: const Icon(Icons.clear),
+                        ),
+                      ],
                     ),
                   ],
                 ),
                 Expanded(
                   child: Container(
+                    padding: const EdgeInsets.all(8.0),
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(4.0),
                     ),
                     child: SingleChildScrollView(
                       controller: _logScrollController,
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: SelectableText(log, style: const TextStyle(fontFamily: 'monospace')),
-                      ),
+                      child: Text(log),
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          if (_isLoading)
-            Container(
-              color: Colors.black.withAlpha(128),
-              child: const Center(
-                child: CircularProgressIndicator(),
-              ),
-            ),
         ],
       ),
     );
